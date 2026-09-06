@@ -7,7 +7,72 @@ use App\Http\Controllers\Api\Customer\CustomerLoyaltyController;
 use App\Http\Controllers\Api\Kitchen\KitchenOrderController;
 use App\Http\Controllers\Api\Menu\MenuAccessController;
 use App\Http\Controllers\Api\Menu\MenuOrderController;
+use App\Http\Controllers\Api\Admin\MenuCategoryController;
+use App\Http\Controllers\Api\Admin\MenuItemController;
+use App\Http\Controllers\Api\Admin\MenuItemBranchController;
+use App\Http\Controllers\Api\Admin\TableController;
+use App\Http\Controllers\Api\Admin\QrCodeController;
 use Illuminate\Support\Facades\Route;
+
+/*
+|--------------------------------------------------------------------------
+| Admin - Menu Management (auth:sanctum → users)
+|--------------------------------------------------------------------------
+*/
+// عام — بدون auth
+Route::get('/qr/{qrCode}/image', [QrCodeController::class, 'image']);
+
+Route::middleware('auth:sanctum')
+    ->prefix('admin')
+    ->group(function () {
+
+        // ===== التصنيفات (الأصناف الرئيسية) =====
+      // ===== الطاولات =====
+Route::get('branches/{branch}/tables', [TableController::class, 'index']);
+Route::post('branches/{branch}/tables', [TableController::class, 'store']);
+Route::get('tables/{table}', [TableController::class, 'show']);
+Route::put('tables/{table}', [TableController::class, 'update']);
+Route::delete('tables/{table}', [TableController::class, 'destroy']);
+
+// ===== QR Codes =====
+Route::get('branches/{branch}/qr-codes', [QrCodeController::class, 'index']);
+Route::post('branches/{branch}/qr-codes', [QrCodeController::class, 'store']);          // QR فرع أو طاولة
+Route::post('tables/{table}/qr-code', [QrCodeController::class, 'generateForTable']); // توليد QR لطاولة
+Route::post('qr-codes/{qrCode}/rotate', [QrCodeController::class, 'rotate']);         // تجديد التوكين
+Route::post('qr-codes/{qrCode}/manual-code', [QrCodeController::class, 'setManualCode']);
+Route::put('qr-codes/{qrCode}', [QrCodeController::class, 'update']);
+Route::delete('qr-codes/{qrCode}', [QrCodeController::class, 'destroy']);
+  // ===== التصنيفات (الأصناف الرئيسية) =====
+Route::get('categories', [MenuCategoryController::class, 'index']);
+Route::post('categories', [MenuCategoryController::class, 'store']);
+Route::get('categories/{category}', [MenuCategoryController::class, 'show']);
+Route::post('categories/{category}', [MenuCategoryController::class, 'update']);
+Route::patch('categories/{category}', [MenuCategoryController::class, 'update']);
+Route::delete('categories/{category}', [MenuCategoryController::class, 'destroy']);
+
+        // ===== الأصناف (المنتجات) =====
+   // ===== الأصناف (المنتجات) =====
+Route::get('items', [MenuItemController::class, 'index']);
+Route::post('items', [MenuItemController::class, 'store']);
+Route::get('items/{item}', [MenuItemController::class, 'show']);
+Route::post('items/{item}', [MenuItemController::class, 'update']);
+Route::patch('items/{item}', [MenuItemController::class, 'update']);
+Route::delete('items/{item}', [MenuItemController::class, 'destroy']);
+
+        // خيارات الصنف (Options + Values)
+        Route::post('items/{item}/options', [MenuItemController::class, 'storeOption']);
+        Route::put('items/{item}/options/{option}', [MenuItemController::class, 'updateOption']);
+        Route::delete('items/{item}/options/{option}', [MenuItemController::class, 'destroyOption']);
+
+        // ===== ربط الصنف بالفرع (الاستوك / التوفر / السعر الخاص) =====
+        Route::get('items/{item}/branches', [MenuItemBranchController::class, 'index']);
+        Route::post('items/{item}/branches', [MenuItemBranchController::class, 'attach']);
+        Route::put('items/{item}/branches/{branch}', [MenuItemBranchController::class, 'update']);
+        Route::delete('items/{item}/branches/{branch}', [MenuItemBranchController::class, 'detach']);
+
+        // قائمة سريعة لكل الأصناف المربوطة بفرع معين
+        Route::get('branches/{branch}/items', [MenuItemBranchController::class, 'itemsByBranch']);
+    });
 
 /*
 |--------------------------------------------------------------------------
