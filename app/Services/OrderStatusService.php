@@ -9,6 +9,11 @@ use App\Models\Staff;
 
 class OrderStatusService
 {
+    public function __construct(
+        private readonly LoyaltyService $loyaltyService,
+    ) {
+    }
+
     /**
      * الانتقال بحالة الطلب من الحالة الحالية لحالة جديدة، بعد التحقق إن
      * الانتقال ده مسموح بيه في خريطة Order::allowedTransitions().
@@ -23,6 +28,10 @@ class OrderStatusService
         }
 
         $order->update(['status' => $newStatus]);
+
+        if (in_array($newStatus, [Order::STATUS_REJECTED, Order::STATUS_CANCELLED], true)) {
+            $this->loyaltyService->refundRedeemedPoints($order->fresh());
+        }
 
         $order->statusLogs()->create([
             'status' => $newStatus,

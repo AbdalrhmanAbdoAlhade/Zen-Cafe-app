@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\Auth\CustomerAuthController;
 use App\Http\Controllers\Api\Auth\StaffAuthController;
 use App\Http\Controllers\Api\Cashier\CashierOrderController;
+use App\Http\Controllers\Api\Customer\CustomerLoyaltyController;
 use App\Http\Controllers\Api\Kitchen\KitchenOrderController;
 use App\Http\Controllers\Api\Menu\MenuAccessController;
 use App\Http\Controllers\Api\Menu\MenuOrderController;
@@ -15,6 +16,10 @@ use Illuminate\Support\Facades\Route;
 */
 Route::post('/customer/login', [CustomerAuthController::class, 'login']);
 Route::post('/staff/login', [StaffAuthController::class, 'login']);
+
+Route::middleware('auth:customer')->group(function () {
+    Route::get('/customer/loyalty', [CustomerLoyaltyController::class, 'show']);
+});
 
 /*
 |--------------------------------------------------------------------------

@@ -17,6 +17,7 @@ class Customer extends Authenticatable
         'email',
         'phone',
         'password',
+        'loyalty_points_balance',
     ];
 
     protected $hidden = [
@@ -31,5 +32,10 @@ class Customer extends Authenticatable
     public function orders(): HasMany
     {
         return $this->hasMany(Order::class);
+    }
+
+    public function loyaltyTransactions(): HasMany
+    {
+        return $this->hasMany(LoyaltyPointsTransaction::class)->latest();
     }
 }

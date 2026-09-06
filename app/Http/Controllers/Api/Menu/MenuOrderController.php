@@ -31,6 +31,10 @@ class MenuOrderController extends Controller
                 'id' => $result['order']->id,
                 'status' => $result['order']->status,
                 'total_amount' => (float) $result['order']->total_amount,
+                'redeemed_points' => (int) $result['order']->redeemed_points,
+                'redeemed_amount' => (float) $result['order']->redeemed_amount,
+                'payable_amount' => $result['order']->payableAmount(),
+                'earned_points' => (int) $result['order']->earned_points,
                 'items' => $result['order']->items,
             ],
             // بترجع بس أول مرة يتعمل فيها الحساب - الفرونت يطبعها للزبون
@@ -55,6 +59,10 @@ class MenuOrderController extends Controller
                 'id' => $order->id,
                 'status' => $order->status,
                 'total_amount' => (float) $order->total_amount,
+                'redeemed_points' => (int) $order->redeemed_points,
+                'redeemed_amount' => (float) $order->redeemed_amount,
+                'payable_amount' => $order->payableAmount(),
+                'earned_points' => (int) $order->earned_points,
                 'items' => $order->items()->with('options')->get(),
             ],
         ]);

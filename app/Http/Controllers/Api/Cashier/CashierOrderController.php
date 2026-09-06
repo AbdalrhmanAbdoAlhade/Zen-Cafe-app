@@ -77,7 +77,13 @@ class CashierOrderController extends Controller
             (float) $request->input('amount'),
         );
 
-        return response()->json(['payment' => $payment, 'order' => $order->fresh()]);
+        $freshOrder = $order->fresh();
+
+        return response()->json([
+            'payment' => $payment,
+            'order' => $freshOrder,
+            'payable_amount' => $freshOrder->payableAmount(),
+        ]);
     }
 
     private function authorizeSameBranch(Request $request, Order $order): void

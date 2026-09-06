@@ -17,16 +17,6 @@ class OrderService
     /**
      * إنشاء طلب جديد من بيانات السلة (Cart) اللي بعتها الزبون.
      *
-     * شكل $cartPayload المتوقع:
-     * [
-     *   'customer' => ['name' => ?, 'email' => ?, 'phone' => ?],
-     *   'notes' => ?,
-     *   'items' => [
-     *       ['menu_item_id' => 1, 'quantity' => 2, 'option_value_ids' => [3, 5], 'notes' => ?],
-     *       ...
-     *   ],
-     * ]
-     *
      * @return array{order: Order, customer_credentials: array{phone: string, password: string}|null}
      */
     public function createOrder(QrCode $qrCode, array $cartPayload): array
@@ -57,6 +47,12 @@ class OrderService
             }
 
             $order->update(['total_amount' => $totalAmount]);
+
+            app(LoyaltyService::class)->redeemPoints(
+                $order,
+                $customer,
+                (int) ($cartPayload['redeemed_points'] ?? 0),
+            );
 
             event(new OrderCreated($order));
 

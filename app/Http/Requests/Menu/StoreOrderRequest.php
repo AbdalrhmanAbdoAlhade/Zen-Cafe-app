@@ -22,6 +22,7 @@ class StoreOrderRequest extends FormRequest
             'customer.phone' => ['nullable', 'string', 'max:30'],
 
             'notes' => ['nullable', 'string', 'max:500'],
+            'redeemed_points' => ['nullable', 'integer', 'min:0'],
 
             'items' => ['required', 'array', 'min:1'],
             'items.*.menu_item_id' => ['required', 'integer', 'exists:menu_items,id'],

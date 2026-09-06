@@ -28,11 +28,17 @@ class Order extends Model
         'customer_id',
         'status',
         'total_amount',
+        'redeemed_points',
+        'redeemed_amount',
+        'earned_points',
         'notes',
     ];
 
     protected $casts = [
         'total_amount' => 'decimal:2',
+        'redeemed_points' => 'integer',
+        'redeemed_amount' => 'decimal:2',
+        'earned_points' => 'integer',
     ];
 
     public function branch(): BelongsTo
@@ -68,6 +74,16 @@ class Order extends Model
     public function payment(): HasOne
     {
         return $this->hasOne(OrderPayment::class);
+    }
+
+    public function loyaltyTransactions(): HasMany
+    {
+        return $this->hasMany(LoyaltyPointsTransaction::class);
+    }
+
+    public function payableAmount(): float
+    {
+        return max(0, round((float) $this->total_amount - (float) $this->redeemed_amount, 2));
     }
 
     /**

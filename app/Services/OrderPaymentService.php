@@ -12,6 +12,7 @@ class OrderPaymentService
 {
     public function __construct(
         private readonly OrderStatusService $orderStatusService,
+        private readonly LoyaltyService $loyaltyService,
     ) {
     }
 
@@ -21,7 +22,7 @@ class OrderPaymentService
      */
     public function recordPayment(Order $order, Staff $staff, string $method, float $amount): OrderPayment
     {
-        $expected = (float) $order->total_amount;
+        $expected = $order->payableAmount();
 
         if (abs($expected - $amount) > 0.01) {
             throw new PaymentAmountMismatchException($expected, $amount);
@@ -36,6 +37,7 @@ class OrderPaymentService
             ]);
 
             $this->orderStatusService->transition($order, Order::STATUS_PAID, $staff);
+            $this->loyaltyService->earnPoints($order->fresh());
 
             return $payment;
         });
