@@ -51,6 +51,7 @@ return [
     | the application so that it's available within Artisan commands.
     |
     */
+  'frontend_url' => env('FRONTEND_URL', env('APP_URL')),
 
     'url' => env('APP_URL', 'http://localhost'),
 

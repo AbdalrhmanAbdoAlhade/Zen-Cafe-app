@@ -8,13 +8,13 @@ use Illuminate\Support\Str;
 
 class MenuAccessService
 {
-    private const TTL_MINUTES = 30;
+    private const TTL_HOURS = 24;
 
     private const CACHE_PREFIX = 'menu_access_token:';
 
     /**
      * توليد توكين وصول مؤقت بعد نجاح التحقق (جيوفنسينج أو كود يدوي)،
-     * ومربوط بالـ QrCode لمدة محدودة.
+     * ومربوط بالـ QrCode لمدة 24 ساعة.
      */
     public function issueToken(QrCode $qrCode): string
     {
@@ -23,7 +23,7 @@ class MenuAccessService
         Cache::put(
             self::CACHE_PREFIX.$accessToken,
             $qrCode->id,
-            now()->addMinutes(self::TTL_MINUTES),
+            now()->addHours(self::TTL_HOURS),
         );
 
         return $accessToken;

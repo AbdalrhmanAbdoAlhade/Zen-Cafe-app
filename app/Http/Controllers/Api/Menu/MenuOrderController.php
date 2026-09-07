@@ -46,25 +46,30 @@ class MenuOrderController extends Controller
      * GET /api/menu/{token}/orders/{order}
      * محمي بـ middleware EnsureMenuAccessVerified - متابعة أوردر تابع لنفس الـ QR بس.
      */
-    public function show(Request $request, Order $order): JsonResponse
-    {
-        $qrCode = $request->attributes->get('resolved_qr_code');
+    public function show(Request $request, string $token, Order $order): JsonResponse
+{
+    $qrCode = $request->attributes->get('resolved_qr_code');
 
-        if ($order->qr_code_id !== $qrCode->id) {
-            abort(404, 'هذا الطلب غير موجود لهذا الرمز.');
-        }
-
-        return response()->json([
-            'order' => [
-                'id' => $order->id,
-                'status' => $order->status,
-                'total_amount' => (float) $order->total_amount,
-                'redeemed_points' => (int) $order->redeemed_points,
-                'redeemed_amount' => (float) $order->redeemed_amount,
-                'payable_amount' => $order->payableAmount(),
-                'earned_points' => (int) $order->earned_points,
-                'items' => $order->items()->with('options')->get(),
-            ],
-        ]);
+    if ($order->qr_code_id !== $qrCode->id) {
+        abort(404, 'هذا الطلب غير موجود لهذا الرمز.');
     }
+
+    return response()->json([
+        'order' => [
+            'id' => $order->id,
+            'status' => $order->status,
+            'total_amount' => (float) $order->total_amount,
+            'redeemed_points' => (int) $order->redeemed_points,
+            'redeemed_amount' => (float) $order->redeemed_amount,
+            'payable_amount' => $order->payableAmount(),
+            'earned_points' => (int) $order->earned_points,
+           'items' => $order->items()
+    ->with([
+        'menuItem',
+        'options',
+    ])
+    ->get(),
+        ],
+    ]);
+}
 }
