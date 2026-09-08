@@ -12,6 +12,8 @@ use App\Http\Controllers\Api\Admin\MenuItemController;
 use App\Http\Controllers\Api\Admin\MenuItemBranchController;
 use App\Http\Controllers\Api\Admin\TableController;
 use App\Http\Controllers\Api\Admin\QrCodeController;
+use App\Http\Controllers\Api\Admin\BranchController;
+use App\Http\Controllers\Api\Admin\StaffController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -26,7 +28,21 @@ Route::middleware('auth:sanctum')
     ->prefix('admin')
     ->group(function () {
 
-        // ===== التصنيفات (الأصناف الرئيسية) =====
+      // ===== الفروع =====
+Route::get('branches', [BranchController::class, 'index']);
+Route::post('branches', [BranchController::class, 'store']);
+Route::get('branches/{branch}', [BranchController::class, 'show']);
+Route::put('branches/{branch}', [BranchController::class, 'update']);
+Route::patch('branches/{branch}', [BranchController::class, 'update']);
+Route::delete('branches/{branch}', [BranchController::class, 'destroy']);
+ 
+// ===== الموظفين (كاشير/مطبخ/مدير) =====
+Route::get('branches/{branch}/staff', [StaffController::class, 'index']);
+Route::post('branches/{branch}/staff', [StaffController::class, 'store']);
+Route::get('staff/{staff}', [StaffController::class, 'show']);
+Route::put('staff/{staff}', [StaffController::class, 'update']);
+Route::patch('staff/{staff}', [StaffController::class, 'update']);
+Route::delete('staff/{staff}', [StaffController::class, 'destroy']);
       // ===== الطاولات =====
 Route::get('branches/{branch}/tables', [TableController::class, 'index']);
 Route::post('branches/{branch}/tables', [TableController::class, 'store']);
