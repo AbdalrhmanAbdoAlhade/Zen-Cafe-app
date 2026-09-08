@@ -15,15 +15,27 @@ class TableController extends Controller
         private readonly QrTokenService $qrTokenService,
     ) {}
 
-    public function index(Branch $branch)
-    {
-        $tables = $branch->tables()
-            ->with('qrCode:id,token,type,is_active,table_id')
-            ->orderBy('table_number')
-            ->get();
+    public function index(Branch $branch )
+{
+    $tables = $branch->tables()
+        ->with('qrCode:id,token,type,is_active,table_id')
+        ->orderBy('table_number')
+        ->get()
+        ->map(function ($table) {
+            if ($table->qrCode) {
+                $table->qrCode->qr_image = url(
+                    "/api/qr/{$table->qrCode->id}/image"
+                );
+            }
 
-        return response()->json(['data' => $tables]);
-    }
+            return $table;
+        });
+
+    return response()->json([
+        'data' => $tables,
+    ]);
+}
+
 
     /**
      * إنشاء طاولة + توليد QR تلقائيًا

@@ -22,6 +22,7 @@ class BranchController extends Controller
         $data = $request->validate([
             'name_ar' => ['required', 'string', 'max:255'],
             'name_en' => ['required', 'string', 'max:255'],
+          'address' => ['nullable', 'string', 'max:1000'],
             'lat' => ['required', 'numeric', 'between:-90,90'],
             'lng' => ['required', 'numeric', 'between:-180,180'],
             'default_radius_meters' => ['nullable', 'integer', 'min:10'],
@@ -52,6 +53,7 @@ class BranchController extends Controller
         $data = $request->validate([
             'name_ar' => ['sometimes', 'string', 'max:255'],
             'name_en' => ['sometimes', 'string', 'max:255'],
+          'address' => ['sometimes', 'string', 'max:1000'],
             'lat' => ['sometimes', 'numeric', 'between:-90,90'],
             'lng' => ['sometimes', 'numeric', 'between:-180,180'],
             'default_radius_meters' => ['nullable', 'integer', 'min:10'],

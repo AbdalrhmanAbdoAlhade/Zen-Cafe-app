@@ -14,6 +14,7 @@ class Branch extends Model
     protected $fillable = [
         'name_ar',
         'name_en',
+      'address',
         'lat',
         'lng',
         'default_radius_meters',

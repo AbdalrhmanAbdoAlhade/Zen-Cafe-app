@@ -12,6 +12,7 @@ return new class extends Migration
             $table->id();
             $table->string('name_ar');
             $table->string('name_en');
+          $table->string('address');
             $table->decimal('lat', 10, 7);
             $table->decimal('lng', 10, 7);
             $table->unsignedInteger('default_radius_meters')->default(100);
