@@ -114,12 +114,27 @@ class MenuAccessController extends Controller
      * GET /api/menu/{token}/items
      * محمي بـ middleware EnsureMenuAccessVerified - المنيو الفعلي.
      */
-    public function items(Request $request): JsonResponse
-    {
-        $qrCode = $request->attributes->get('resolved_qr_code');
+   /**
+ * GET /api/menu/{token}/items
+ * محمي بـ middleware EnsureMenuAccessVerified
+ *
+ * Query params:
+ * - category_id (optional)
+ * - page (optional)
+ */
+public function items(Request $request): JsonResponse
+{
+    $qrCode = $request->attributes->get('resolved_qr_code');
 
-        return response()->json([
-            'categories' => $this->menuBuilderService->getMenuForBranch($qrCode->branch),
-        ]);
-    }
+    $categoryId = $request->query('category_id');
+    $perPage    = 15;
+
+    $result = $this->menuBuilderService->getMenuForBranch(
+        branch: $qrCode->branch,
+        categoryId: $categoryId ? (int) $categoryId : null,
+        perPage: $perPage
+    );
+
+    return response()->json($result);
+}
 }
