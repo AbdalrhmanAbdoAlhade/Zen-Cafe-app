@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\Customer\CustomerLoyaltyController;
 use App\Http\Controllers\Api\Kitchen\KitchenOrderController;
 use App\Http\Controllers\Api\Menu\MenuAccessController;
 use App\Http\Controllers\Api\Menu\MenuOrderController;
+use App\Http\Controllers\Api\Menu\OnlineMenuController;
 use App\Http\Controllers\Api\Admin\MenuCategoryController;
 use App\Http\Controllers\Api\Admin\MenuItemController;
 use App\Http\Controllers\Api\Admin\MenuItemBranchController;
@@ -21,6 +22,8 @@ use Illuminate\Support\Facades\Route;
 | Admin - Menu Management (auth:sanctum → users)
 |--------------------------------------------------------------------------
 */
+Route::get('online-menu/{branchId}/items/{itemId}', [OnlineMenuController::class, 'itemDetails']);
+Route::get('/branches', [OnlineMenuController::class, 'index']);
 // عام — بدون auth
 Route::get('/qr/{qrCode}/image', [QrCodeController::class, 'image']);
 
@@ -35,6 +38,8 @@ Route::get('branches/{branch}', [BranchController::class, 'show']);
 Route::put('branches/{branch}', [BranchController::class, 'update']);
 Route::patch('branches/{branch}', [BranchController::class, 'update']);
 Route::delete('branches/{branch}', [BranchController::class, 'destroy']);
+Route::post('branches/{branch}/pause', [BranchController::class, 'pause']);
+Route::post('branches/{branch}/resume', [BranchController::class, 'resume']);
  
 // ===== الموظفين (كاشير/مطبخ/مدير) =====
 Route::get('branches/{branch}/staff', [StaffController::class, 'index']);
@@ -97,6 +102,12 @@ Route::delete('items/{item}', [MenuItemController::class, 'destroy']);
 */
 Route::post('/customer/login', [CustomerAuthController::class, 'login']);
 Route::post('/staff/login', [StaffAuthController::class, 'login']);
+Route::prefix('online-menu/{branchId}')->group(function () {
+    Route::get('/', [OnlineMenuController::class, 'show']);
+    Route::get('/items', [OnlineMenuController::class, 'items']);
+    Route::post('/orders', [OnlineMenuController::class, 'store']);
+    Route::get('/orders/{order}', [OnlineMenuController::class, 'showOrder']);
+});
 
 Route::middleware('auth:customer')->group(function () {
     Route::get('/customer/loyalty', [CustomerLoyaltyController::class, 'show']);
