@@ -19,6 +19,9 @@ class Branch extends Model
         'lng',
         'default_radius_meters',
         'is_active',
+        'is_online_paused',
+        'pause_reason',
+        'paused_at',
     ];
 
     protected $casts = [
@@ -26,6 +29,8 @@ class Branch extends Model
         'lng' => 'decimal:7',
         'default_radius_meters' => 'integer',
         'is_active' => 'boolean',
+        'is_online_paused' => 'boolean',
+        'paused_at' => 'datetime',
     ];
 
     public function qrCodes(): HasMany

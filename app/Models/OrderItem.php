@@ -16,12 +16,16 @@ class OrderItem extends Model
         'menu_item_id',
         'quantity',
         'unit_price',
+        'preparation_time_minutes',
+        'vat',
         'notes',
     ];
 
     protected $casts = [
         'quantity' => 'integer',
         'unit_price' => 'decimal:2',
+        'preparation_time_minutes' => 'integer',
+        'vat' => 'decimal:2',
     ];
 
     public function order(): BelongsTo

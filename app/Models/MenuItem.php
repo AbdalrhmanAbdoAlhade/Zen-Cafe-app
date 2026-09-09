@@ -20,12 +20,24 @@ class MenuItem extends Model
         'description_en',
         'image',
         'base_price',
+        'preparation_time_minutes',
         'is_available',
+        'is_available_online',
+        'vat',
+        'calories',
+        'allergens',
+        'ingredients',
     ];
 
     protected $casts = [
         'base_price' => 'decimal:2',
         'is_available' => 'boolean',
+        'is_available_online' => 'boolean',
+        'preparation_time_minutes' => 'integer',
+        'vat' => 'decimal:2',
+        'calories' => 'integer',
+        'allergens' => 'array',
+        'ingredients' => 'array',
     ];
 
     public function category(): BelongsTo

@@ -26,8 +26,11 @@ class Order extends Model
         'table_id',
         'qr_code_id',
         'customer_id',
+        'order_type',
         'status',
         'total_amount',
+        'estimated_preparation_minutes',
+        'estimated_ready_at',
         'redeemed_points',
         'redeemed_amount',
         'earned_points',
@@ -39,6 +42,8 @@ class Order extends Model
         'redeemed_points' => 'integer',
         'redeemed_amount' => 'decimal:2',
         'earned_points' => 'integer',
+        'estimated_preparation_minutes' => 'integer',
+        'estimated_ready_at' => 'datetime',
     ];
 
     public function branch(): BelongsTo

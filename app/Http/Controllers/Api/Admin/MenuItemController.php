@@ -42,7 +42,13 @@ class MenuItemController extends Controller
             'description_en'  => ['nullable', 'string'],
             'image'           => ['nullable', 'image', 'mimes:jpeg,png,jpg,webp,gif', 'max:5120'],
             'base_price'      => ['required', 'numeric', 'min:0'],
+            'preparation_time_minutes' => ['nullable', 'integer', 'min:0'],
             'is_available'    => ['nullable', 'boolean'],
+            'is_available_online' => ['nullable', 'boolean'],
+            'vat' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'calories' => ['nullable', 'integer', 'min:0'],
+            'allergens' => ['nullable', 'array'],
+            'ingredients' => ['nullable', 'array'],
 
             'options'                        => ['nullable', 'array'],
             'options.*.name_ar'              => ['required_with:options', 'string', 'max:255'],
@@ -74,7 +80,13 @@ class MenuItemController extends Controller
                 'description_en' => $data['description_en'] ?? null,
                 'image'          => $imagePath,
                 'base_price'     => $data['base_price'],
+                'preparation_time_minutes' => $data['preparation_time_minutes'] ?? 0,
                 'is_available'   => $data['is_available'] ?? true,
+                'is_available_online' => $data['is_available_online'] ?? true,
+                'vat' => $data['vat'] ?? 0,
+                'calories' => $data['calories'] ?? null,
+                'allergens' => $data['allergens'] ?? null,
+                'ingredients' => $data['ingredients'] ?? null,
             ]);
 
             if (! empty($data['options'])) {
@@ -124,7 +136,13 @@ class MenuItemController extends Controller
             'description_en' => ['nullable', 'string'],
             'image'          => ['nullable', 'image', 'mimes:jpeg,png,jpg,webp,gif', 'max:5120'],
             'base_price'     => ['sometimes', 'numeric', 'min:0'],
+            'preparation_time_minutes' => ['sometimes', 'integer', 'min:0'],
             'is_available'   => ['nullable', 'boolean'],
+            'is_available_online' => ['nullable', 'boolean'],
+            'vat' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'calories' => ['nullable', 'integer', 'min:0'],
+            'allergens' => ['nullable', 'array'],
+            'ingredients' => ['nullable', 'array'],
         ]);
 
         if ($request->hasFile('image')) {

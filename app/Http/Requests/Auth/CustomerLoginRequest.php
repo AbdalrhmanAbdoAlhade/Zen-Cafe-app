@@ -14,8 +14,9 @@ class CustomerLoginRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'phone' => ['required', 'string'],
-            'password' => ['required', 'string'],
+            'phone' => ['required', 'string', 'max:30'],
+            'name'  => ['sometimes', 'nullable', 'string', 'max:150'],
+            'email' => ['sometimes', 'nullable', 'email', 'max:150'],
         ];
     }
 }

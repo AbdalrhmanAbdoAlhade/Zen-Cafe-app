@@ -30,6 +30,9 @@ class MenuOrderController extends Controller
             'order' => [
                 'id' => $result['order']->id,
                 'status' => $result['order']->status,
+                'order_type' => $result['order']->order_type,
+                'estimated_preparation_minutes' => (int) $result['order']->estimated_preparation_minutes,
+                'estimated_ready_at' => $result['order']->estimated_ready_at,
                 'total_amount' => (float) $result['order']->total_amount,
                 'redeemed_points' => (int) $result['order']->redeemed_points,
                 'redeemed_amount' => (float) $result['order']->redeemed_amount,

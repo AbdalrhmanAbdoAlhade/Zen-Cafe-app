@@ -68,6 +68,19 @@ class BranchController extends Controller
         ]);
     }
 
+    public function pause(Request $request, Branch $branch)
+    {
+        $data = $request->validate(['reason' => ['nullable', 'string', 'max:255']]);
+        $branch->update(['is_online_paused' => true, 'pause_reason' => $data['reason'] ?? null, 'paused_at' => now()]);
+        return response()->json(['message' => 'تم إيقاف الطلبات الخارجية مؤقتًا', 'data' => $branch->fresh()]);
+    }
+
+    public function resume(Branch $branch)
+    {
+        $branch->update(['is_online_paused' => false, 'pause_reason' => null, 'paused_at' => null]);
+        return response()->json(['message' => 'تم استئناف الطلبات الخارجية', 'data' => $branch->fresh()]);
+    }
+
     public function destroy(Branch $branch)
     {
         // منع حذف فرع لسه عنده طاولات أو موظفين أو أوردرات مرتبطة بيه
