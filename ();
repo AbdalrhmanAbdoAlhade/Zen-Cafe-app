@@ -1,0 +1,32 @@
+[90m= [39m[34;4mIlluminate\Routing\Route[39;24m {#343
+    +[1muri[22m: [32m"[39m[32mapi/menu/{token}/orders/{order}[39m[32m"[39m,
+    +[1mmethods[22m: [
+      [32m"[39m[32mGET[39m[32m"[39m,
+      [32m"[39m[32mHEAD[39m[32m"[39m,
+    ],
+    +[1maction[22m: [
+      [34m"[39m[34mmiddleware[39m[34m"[39m => [
+        [32m"[39m[32mapi[39m[32m"[39m,
+        [32m"[39m[32mmenu.access.verified[39m[32m"[39m,
+      ],
+      [34m"[39m[34muses[39m[34m"[39m => [32m"[39m[32mApp[39m\\[32mHttp[39m\\[32mControllers[39m\\[32mApi[39m\\[32mMenu[39m\\[32mMenuOrderController@show[39m[32m"[39m,
+      [34m"[39m[34mcontroller[39m[34m"[39m => [32m"[39m[32mApp[39m\\[32mHttp[39m\\[32mControllers[39m\\[32mApi[39m\\[32mMenu[39m\\[32mMenuOrderController@show[39m[32m"[39m,
+      [34m"[39m[34mnamespace[39m[34m"[39m => [36mnull[39m,
+      [34m"[39m[34mprefix[39m[34m"[39m => [32m"[39m[32mapi/menu/{token}[39m[32m"[39m,
+      [34m"[39m[34mwhere[39m[34m"[39m => [],
+    ],
+    +[1misFallback[22m: [36mfalse[39m,
+    +[1mcontroller[22m: [36mnull[39m,
+    +[1mdefaults[22m: [],
+    +[1mwheres[22m: [],
+    +[1mparameters[22m: [
+      [34m"[39m[34mtoken[39m[34m"[39m => [32m"[39m[32mtest[39m[32m"[39m,
+      [34m"[39m[34morder[39m[34m"[39m => [32m"[39m[32m1[39m[32m"[39m,
+    ],
+    +[1mparameterNames[22m: [
+      [32m"[39m[32mtoken[39m[32m"[39m,
+      [32m"[39m[32morder[39m[32m"[39m,
+    ],
+    +[1mcomputedMiddleware[22m: [36mnull[39m,
+    +[1mcompiled[22m: [34;4mSymfony\Component\Routing\CompiledRoute[39;24m {#7598},
+  }
