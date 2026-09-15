@@ -20,6 +20,7 @@ class Order extends Model
     public const STATUS_SERVED = 'served';
     public const STATUS_PAID = 'paid';
     public const STATUS_CANCELLED = 'cancelled';
+    public const STATUS_REFUNDED = 'refunded';
 
     protected $fillable = [
         'branch_id',
@@ -35,6 +36,10 @@ class Order extends Model
         'redeemed_amount',
         'earned_points',
         'notes',
+        'received_at',
+        'fulfillment_type',
+        'payment_gateway',
+        'payment_reference',
     ];
 
     protected $casts = [
@@ -44,6 +49,7 @@ class Order extends Model
         'earned_points' => 'integer',
         'estimated_preparation_minutes' => 'integer',
         'estimated_ready_at' => 'datetime',
+        'received_at' => 'datetime',
     ];
 
     public function branch(): BelongsTo
@@ -86,13 +92,19 @@ class Order extends Model
         return $this->hasMany(LoyaltyPointsTransaction::class);
     }
 
+    public function shipment(): HasOne
+    {
+        return $this->hasOne(OrderShipment::class);
+    }
+
     public function payableAmount(): float
     {
         return max(0, round((float) $this->total_amount - (float) $this->redeemed_amount, 2));
     }
 
     /**
-     * خريطة الانتقالات المسموحة بين الحالات - يستخدمها OrderStatusService.
+     * خريطة الانتقالات المسموحة بين الحالات لطلبات المنيو (in_branch / pre_order).
+     * يستخدمها OrderStatusService.
      */
     public static function allowedTransitions(): array
     {
@@ -104,6 +116,20 @@ class Order extends Model
             self::STATUS_SERVED => [self::STATUS_PAID],
             self::STATUS_REJECTED => [],
             self::STATUS_PAID => [],
+            self::STATUS_CANCELLED => [],
+        ];
+    }
+
+    /**
+     * خريطة الانتقالات المسموحة لطلبات المتجر (order_type = store).
+     * مفيش خطوة قبول من الكاشير - الدفع الأونلاين هو اللي بيحرك الحالة.
+     */
+    public static function allowedStoreTransitions(): array
+    {
+        return [
+            self::STATUS_PENDING => [self::STATUS_PAID, self::STATUS_CANCELLED],
+            self::STATUS_PAID => [self::STATUS_REFUNDED],
+            self::STATUS_REFUNDED => [],
             self::STATUS_CANCELLED => [],
         ];
     }

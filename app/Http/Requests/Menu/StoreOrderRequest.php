@@ -24,6 +24,9 @@ class StoreOrderRequest extends FormRequest
             'notes' => ['nullable', 'string', 'max:500'],
             'redeemed_points' => ['nullable', 'integer', 'min:0'],
 
+            // الوقت اللي الزبون عايز يستلم/يوصله فيه الطلب (بيتفعل بس في الأونلاين أوردر)
+            'received_at' => ['nullable', 'date', 'after_or_equal:now'],
+
             'items' => ['required', 'array', 'min:1'],
             'items.*.menu_item_id' => ['required', 'integer', 'exists:menu_items,id'],
             'items.*.quantity' => ['required', 'integer', 'min:1', 'max:50'],

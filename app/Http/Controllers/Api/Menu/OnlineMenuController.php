@@ -56,35 +56,41 @@ class OnlineMenuController extends Controller
             ->firstOrFail();
     }
 
-    public function show(int $branchId): JsonResponse
-    {
-        $branch = $this->branch($branchId);
+public function show(int $branchId): JsonResponse
+{
+    $branch = $this->branch($branchId);
 
-        return response()->json([
-            'branch' => [
-                'id' => $branch->id,
-                'name_ar' => $branch->name_ar,
-                'name_en' => $branch->name_en,
-                'address' => $branch->address,
-            ],
-            'online_ordering_paused' => (bool) $branch->is_online_paused,
-            'pause_reason' => $branch->pause_reason,
-        ]);
-    }
+    $categories = $this->menuBuilder->getCategoriesForBranch($branch, true);
 
-    public function items(Request $request, int $branchId): JsonResponse
-    {
-        $branch = $this->branch($branchId);
+    return response()->json([
+        'branch' => [
+            'id'      => $branch->id,
+            'name_ar' => $branch->name_ar,
+            'name_en' => $branch->name_en,
+            'address' => $branch->address,
+        ],
+        'online_ordering_paused' => (bool) $branch->is_online_paused,
+        'pause_reason'           => $branch->pause_reason,
+        'categories'             => $categories,
+    ]);
+}
 
-        return response()->json(
-            $this->menuBuilder->getMenuForBranch(
-                $branch,
-                $request->integer('category_id') ?: null,
-                15,
-                true
-            )
-        );
-    }
+   public function items(Request $request, int $branchId): JsonResponse
+{
+    $branch = $this->branch($branchId);
+
+    return response()->json(
+        $this->menuBuilder->getMenuForBranch(
+            branch: $branch,
+            categoryId: $request->query('category_id') ? (int) $request->query('category_id') : null,
+            perPage: 15,
+            onlineOnly: true,
+            minPrice: $request->query('min_price') !== null ? (float) $request->query('min_price') : null,
+            maxPrice: $request->query('max_price') !== null ? (float) $request->query('max_price') : null,
+            sort: $request->query('sort'),
+        )
+    );
+}
 
     public function store(StoreOrderRequest $request, int $branchId): JsonResponse
     {

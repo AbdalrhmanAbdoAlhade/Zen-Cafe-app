@@ -8,12 +8,20 @@ use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\MenuOptionValue;
 use App\Models\Order;
+use App\Models\OrderShipment;
+use App\Models\Product;
 use App\Models\QrCode;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class OrderService
 {
+    public function __construct(
+        private readonly CartValidationService $cartValidation,
+        private readonly StockService $stockService,
+    ) {
+    }
+
     public function createOrder(QrCode $qrCode, array $payload): array
     {
         return $this->create($qrCode->branch, $payload, $qrCode, false);
@@ -22,6 +30,100 @@ class OrderService
     public function createOnlineOrder(Branch $branch, array $payload): array
     {
         return $this->create($branch, $payload, null, true);
+    }
+
+    /**
+     * إنشاء أوردر متجر (منتجات قابلة للشحن أو استلام سريع).
+     * مختلف عن create() - مفيش qr_code، الأوردر مش مرتبط بفرع بالضرورة كمصدر تحضير،
+     * والمخزون بيتخصم فورًا جوه نفس الـ transaction.
+     */
+    public function createStoreOrder(Branch $branch, array $payload): array
+    {
+        $this->cartValidation->assertNotMixed($payload['items']);
+
+        return DB::transaction(function () use ($branch, $payload) {
+            [$customer, $plainPassword] = $this->findOrCreateCustomer(
+                $payload['customer']['phone'] ?? null,
+                $payload['customer']['name'] ?? null,
+                $payload['customer']['email'] ?? null,
+                true
+            );
+
+            $order = Order::create([
+                'branch_id' => $branch->id,
+                'customer_id' => $customer?->id,
+                'order_type' => 'store',
+                'fulfillment_type' => $payload['fulfillment_type'],
+                'status' => Order::STATUS_PENDING,
+                'total_amount' => 0,
+                'estimated_preparation_minutes' => 0,
+                'notes' => $payload['notes'] ?? null,
+            ]);
+
+            $total = 0;
+
+            foreach ($payload['items'] as $item) {
+                $total += $this->addStoreOrderItem($order, $item);
+            }
+
+            if ($payload['fulfillment_type'] === 'shipping') {
+                $shippingFee = (float) ($payload['shipping']['fee'] ?? 0);
+
+                OrderShipment::create([
+                    'order_id' => $order->id,
+                    'recipient_name' => $payload['shipping']['recipient_name'],
+                    'recipient_phone' => $payload['shipping']['recipient_phone'],
+                    'city' => $payload['shipping']['city'],
+                    'address_line' => $payload['shipping']['address_line'],
+                    'building' => $payload['shipping']['building'] ?? null,
+                    'landmark' => $payload['shipping']['landmark'] ?? null,
+                    'shipping_fee' => $shippingFee,
+                ]);
+
+                $total += $shippingFee;
+            }
+
+            $order->update(['total_amount' => $total]);
+
+            event(new OrderCreated($order));
+
+            return [
+                'order' => $order->fresh(['items.productVariant.product', 'branch', 'shipment']),
+                'customer_credentials' => $plainPassword ? [
+                    'phone' => $customer->phone,
+                    'password' => $plainPassword,
+                ] : null,
+                'customer_auth_token' => $customer
+                    ? $customer->createToken('customer-access')->plainTextToken
+                    : null,
+            ];
+        });
+    }
+
+    private function addStoreOrderItem(Order $order, array $cartItem): float
+    {
+        $variant = \App\Models\ProductVariant::with('product')
+            ->where('is_available', true)
+            ->whereHas('product', fn ($q) => $q->where('is_available', true))
+            ->find($cartItem['product_variant_id']);
+
+        if (! $variant) {
+            throw new OrderItemUnavailableException($cartItem['product_variant_id']);
+        }
+
+        $quantity = max(1, (int) ($cartItem['quantity'] ?? 1));
+        $unitPrice = $variant->effectivePrice();
+
+        $this->stockService->deduct($variant, $quantity, $order);
+
+        $order->items()->create([
+            'product_variant_id' => $variant->id,
+            'quantity' => $quantity,
+            'unit_price' => $unitPrice,
+            'notes' => $cartItem['notes'] ?? null,
+        ]);
+
+        return $unitPrice * $quantity;
     }
 
     private function create(Branch $branch, array $payload, ?QrCode $qrCode, bool $online): array
@@ -43,6 +145,7 @@ class OrderService
                 'status' => Order::STATUS_PENDING,
                 'total_amount' => 0,
                 'estimated_preparation_minutes' => 0,
+                'received_at' => $online ? ($payload['received_at'] ?? null) : null,
                 'notes' => $payload['notes'] ?? null,
             ]);
 
@@ -156,7 +259,7 @@ class OrderService
 
     public function serializeOrder(Order $order): array
     {
-        return [
+        $data = [
             'id' => $order->id,
             'order_type' => $order->order_type,
             'status' => $order->status,
@@ -170,10 +273,33 @@ class OrderService
             'earned_points' => (int)$order->earned_points,
             'items' => $order->items->map(fn ($item) => $this->serializeOrderItem($item))->values(),
         ];
+
+        if ($order->order_type === 'pre_order') {
+            $data['received_at'] = $order->received_at;
+        }
+
+        if ($order->order_type === 'store') {
+            $data['fulfillment_type'] = $order->fulfillment_type;
+            $data['shipment'] = $order->shipment ? [
+                'city' => $order->shipment->city,
+                'address_line' => $order->shipment->address_line,
+                'status' => $order->shipment->status,
+                'tracking_number' => $order->shipment->tracking_number,
+                'shipping_fee' => (float) $order->shipment->shipping_fee,
+                'shipped_at' => $order->shipment->shipped_at,
+                'delivered_at' => $order->shipment->delivered_at,
+            ] : null;
+        }
+
+        return $data;
     }
 
     private function serializeOrderItem($item): array
     {
+        if ($item->product_variant_id) {
+            return $this->serializeStoreOrderItem($item);
+        }
+
         $optionsTotal = $item->options->sum('extra_price');
 
         return [
@@ -195,6 +321,24 @@ class OrderService
                 'extra_price' => (float)$option->extra_price,
             ])->values(),
             'line_total' => (float)(($item->unit_price + $optionsTotal) * $item->quantity),
+        ];
+    }
+
+    private function serializeStoreOrderItem($item): array
+    {
+        $variant = $item->productVariant;
+        $product = $variant?->product;
+
+        return [
+            'id' => $item->id,
+            'product_variant_id' => $item->product_variant_id,
+            'name_ar' => $product?->name_ar,
+            'name_en' => $product?->name_en,
+            'attributes' => $variant?->attributes,
+            'quantity' => (int)$item->quantity,
+            'unit_price' => (float)$item->unit_price,
+            'notes' => $item->notes,
+            'line_total' => (float)($item->unit_price * $item->quantity),
         ];
     }
 }

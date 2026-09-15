@@ -3,11 +3,6 @@
 namespace App\Http\Controllers\Api\Menu;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Menu\VerifyLocationRequest;
-use App\Http\Requests\Menu\VerifyManualCodeRequest;
-use App\Models\MenuAccessLog;
-use App\Services\GeofenceService;
-use App\Services\MenuAccessService;
 use App\Services\MenuBuilderService;
 use App\Services\QrTokenService;
 use Illuminate\Http\JsonResponse;
@@ -17,16 +12,13 @@ class MenuAccessController extends Controller
 {
     public function __construct(
         private readonly QrTokenService $qrTokenService,
-        private readonly GeofenceService $geofenceService,
-        private readonly MenuAccessService $menuAccessService,
         private readonly MenuBuilderService $menuBuilderService,
     ) {
     }
 
     /**
      * GET /api/menu/{token}
-     * بيانات الفرع الأساسية قبل أي تحقق - عشان الفرونت يعرض اسم الفرع
-     * ويطلب صلاحية الموقع من المستخدم.
+     * بيانات الفرع الأساسية - الفرونت يعرضها لو حابب (اسم الفرع مثلاً).
      */
     public function show(string $token): JsonResponse
     {
@@ -39,100 +31,28 @@ class MenuAccessController extends Controller
                 'name_ar' => $branch->name_ar,
                 'name_en' => $branch->name_en,
             ],
-            'has_manual_access_fallback' => (bool) $qrCode->manual_access_code,
-        ]);
-    }
-
-    /**
-     * POST /api/menu/{token}/verify-location
-     * التحقق من الجيوفنسينج - لو داخل النطاق يرجع توكين وصول مؤقت.
-     */
-    public function verifyLocation(VerifyLocationRequest $request, string $token): JsonResponse
-    {
-        $qrCode = $this->qrTokenService->resolve($token);
-        $branch = $qrCode->branch;
-
-        $distance = $this->geofenceService->distanceInMeters(
-            (float) $branch->lat,
-            (float) $branch->lng,
-            (float) $request->input('lat'),
-            (float) $request->input('lng'),
-        );
-
-        $allowed = $distance <= $qrCode->effectiveRadius();
-
-        MenuAccessLog::create([
-            'qr_code_id' => $qrCode->id,
-            'ip' => $request->ip(),
-            'lat' => $request->input('lat'),
-            'lng' => $request->input('lng'),
-            'distance_from_branch' => $distance,
-            'access_method' => 'geofence',
-            'allowed' => $allowed,
-        ]);
-
-        if (! $allowed) {
-            return response()->json([
-                'message' => 'يبدو أنك خارج نطاق الفرع. يمكنك طلب كود دخول يدوي من الجرسون.',
-            ], 403);
-        }
-
-        return response()->json([
-            'access_token' => $this->menuAccessService->issueToken($qrCode),
-        ]);
-    }
-
-    /**
-     * POST /api/menu/{token}/manual-access
-     * الـ Fallback لو المستخدم رفض مشاركة الموقع - كود يدّيه الجرسون.
-     */
-    public function verifyManualCode(VerifyManualCodeRequest $request, string $token): JsonResponse
-    {
-        $qrCode = $this->qrTokenService->resolve($token);
-
-        $allowed = $this->qrTokenService->verifyManualCode($qrCode, $request->input('code'));
-
-        MenuAccessLog::create([
-            'qr_code_id' => $qrCode->id,
-            'ip' => $request->ip(),
-            'access_method' => 'manual_code',
-            'allowed' => $allowed,
-        ]);
-
-        if (! $allowed) {
-            return response()->json([
-                'message' => 'الكود غير صحيح.',
-            ], 403);
-        }
-
-        return response()->json([
-            'access_token' => $this->menuAccessService->issueToken($qrCode),
         ]);
     }
 
     /**
      * GET /api/menu/{token}/items
-     * محمي بـ middleware EnsureMenuAccessVerified - المنيو الفعلي.
+     * المنيو الفعلي - الحماية الوحيدة إن التوكين نفسه يتفك لفرع صحيح.
+     *
+     * Query params:
+     * - category_id (optional)
+     * - page (optional)
      */
-   /**
- * GET /api/menu/{token}/items
- * محمي بـ middleware EnsureMenuAccessVerified
- *
- * Query params:
- * - category_id (optional)
- * - page (optional)
- */
-public function items(Request $request): JsonResponse
+   public function items(Request $request, string $token): JsonResponse
 {
-    $qrCode = $request->attributes->get('resolved_qr_code');
-
-    $categoryId = $request->query('category_id');
-    $perPage    = 15;
+    $qrCode = $this->qrTokenService->resolve($token);
 
     $result = $this->menuBuilderService->getMenuForBranch(
         branch: $qrCode->branch,
-        categoryId: $categoryId ? (int) $categoryId : null,
-        perPage: $perPage
+        categoryId: $request->query('category_id') ? (int) $request->query('category_id') : null,
+        perPage: 15,
+        minPrice: $request->query('min_price') !== null ? (float) $request->query('min_price') : null,
+        maxPrice: $request->query('max_price') !== null ? (float) $request->query('max_price') : null,
+        sort: $request->query('sort'),
     );
 
     return response()->json($result);

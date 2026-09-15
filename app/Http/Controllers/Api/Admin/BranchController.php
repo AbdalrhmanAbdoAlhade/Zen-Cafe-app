@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class BranchController extends Controller
 {
@@ -22,21 +24,39 @@ class BranchController extends Controller
         $data = $request->validate([
             'name_ar' => ['required', 'string', 'max:255'],
             'name_en' => ['required', 'string', 'max:255'],
-          'address' => ['nullable', 'string', 'max:1000'],
+            'address_ar' => ['nullable', 'string', 'max:1000'],   // ← جديد
+            'address_en' => ['nullable', 'string', 'max:1000'], 
             'lat' => ['required', 'numeric', 'between:-90,90'],
             'lng' => ['required', 'numeric', 'between:-180,180'],
             'default_radius_meters' => ['nullable', 'integer', 'min:10'],
             'is_active' => ['nullable', 'boolean'],
+            'logo' => ['nullable', 'image', 'max:2048'],
+            'social_links' => ['nullable', 'array'],
+            'social_links.facebook' => ['nullable', 'url', 'max:255'],
+            'social_links.instagram' => ['nullable', 'url', 'max:255'],
+            'social_links.twitter' => ['nullable', 'url', 'max:255'],
+            'social_links.tiktok' => ['nullable', 'url', 'max:255'],
+            'social_links.whatsapp' => ['nullable', 'string', 'max:50'],
+            'social_links.snapchat' => ['nullable', 'url', 'max:255'],
         ]);
 
         $data['default_radius_meters'] = $data['default_radius_meters'] ?? 100;
         $data['is_active'] = $data['is_active'] ?? true;
 
+        if ($request->hasFile('logo')) {
+            $data['logo'] = $request->file('logo')->store('branches', 'public');
+        }
+
         $branch = Branch::create($data);
+
+        // أول فرع يتعمل يبقى تلقائيًا الفرع الرئيسي لو مفيش فرع رئيسي أصلاً
+        if (! Branch::main()->exists()) {
+            $branch->update(['is_main' => true]);
+        }
 
         return response()->json([
             'message' => 'تم إنشاء الفرع بنجاح',
-            'data' => $branch,
+            'data' => $branch->fresh(),
         ], 201);
     }
 
@@ -53,17 +73,56 @@ class BranchController extends Controller
         $data = $request->validate([
             'name_ar' => ['sometimes', 'string', 'max:255'],
             'name_en' => ['sometimes', 'string', 'max:255'],
-          'address' => ['sometimes', 'string', 'max:1000'],
+            'address_ar' => ['nullable', 'string', 'max:1000'],   // ← جديد
+            'address_en' => ['nullable', 'string', 'max:1000'], 
             'lat' => ['sometimes', 'numeric', 'between:-90,90'],
             'lng' => ['sometimes', 'numeric', 'between:-180,180'],
             'default_radius_meters' => ['nullable', 'integer', 'min:10'],
             'is_active' => ['nullable', 'boolean'],
+            'logo' => ['nullable', 'image', 'max:2048'],
+            'remove_logo' => ['nullable', 'boolean'],
+            'social_links' => ['nullable', 'array'],
+            'social_links.facebook' => ['nullable', 'url', 'max:255'],
+            'social_links.instagram' => ['nullable', 'url', 'max:255'],
+            'social_links.twitter' => ['nullable', 'url', 'max:255'],
+            'social_links.tiktok' => ['nullable', 'url', 'max:255'],
+            'social_links.whatsapp' => ['nullable', 'string', 'max:50'],
+            'social_links.snapchat' => ['nullable', 'url', 'max:255'],
         ]);
+
+        if ($request->boolean('remove_logo') && $branch->logo) {
+            Storage::disk('public')->delete($branch->logo);
+            $data['logo'] = null;
+        } elseif ($request->hasFile('logo')) {
+            if ($branch->logo) {
+                Storage::disk('public')->delete($branch->logo);
+            }
+            $data['logo'] = $request->file('logo')->store('branches', 'public');
+        }
+
+        unset($data['remove_logo']);
 
         $branch->update($data);
 
         return response()->json([
             'message' => 'تم تحديث الفرع',
+            'data' => $branch->fresh(),
+        ]);
+    }
+
+    /**
+     * POST /admin/branches/{branch}/set-main
+     * تعيين الفرع ده كفرع رئيسي، وإلغاء الرئيسي عن أي فرع تاني تلقائيًا.
+     */
+    public function setMain(Branch $branch)
+    {
+        DB::transaction(function () use ($branch) {
+            Branch::where('id', '!=', $branch->id)->update(['is_main' => false]);
+            $branch->update(['is_main' => true]);
+        });
+
+        return response()->json([
+            'message' => 'تم تعيين الفرع كفرع رئيسي',
             'data' => $branch->fresh(),
         ]);
     }
@@ -83,11 +142,20 @@ class BranchController extends Controller
 
     public function destroy(Branch $branch)
     {
-        // منع حذف فرع لسه عنده طاولات أو موظفين أو أوردرات مرتبطة بيه
         if ($branch->tables()->exists() || $branch->staff()->exists() || $branch->orders()->exists()) {
             return response()->json([
                 'message' => 'لا يمكن حذف الفرع لوجود طاولات أو موظفين أو طلبات مرتبطة به. عطّله بدلاً من حذفه.',
             ], 422);
+        }
+
+        if ($branch->is_main) {
+            return response()->json([
+                'message' => 'لا يمكن حذف الفرع الرئيسي. عيّن فرعًا رئيسيًا آخر أولاً.',
+            ], 422);
+        }
+
+        if ($branch->logo) {
+            Storage::disk('public')->delete($branch->logo);
         }
 
         $branch->delete();

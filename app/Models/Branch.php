@@ -14,24 +14,34 @@ class Branch extends Model
     protected $fillable = [
         'name_ar',
         'name_en',
-      'address',
+        'address_ar',      // ← جديد
+        'address_en',      // ← جديد
         'lat',
         'lng',
         'default_radius_meters',
         'is_active',
+        'is_main',
         'is_online_paused',
         'pause_reason',
         'paused_at',
+        'logo',
+        'social_links',
     ];
 
     protected $casts = [
-        'lat' => 'decimal:7',
-        'lng' => 'decimal:7',
+        'lat'                   => 'decimal:7',
+        'lng'                   => 'decimal:7',
         'default_radius_meters' => 'integer',
-        'is_active' => 'boolean',
-        'is_online_paused' => 'boolean',
-        'paused_at' => 'datetime',
+        'is_active'             => 'boolean',
+        'is_main'               => 'boolean',
+        'is_online_paused'      => 'boolean',
+        'paused_at'             => 'datetime',
+        'social_links'          => 'array',
     ];
+
+    /* ============================================================
+     |  Relations
+     ============================================================ */
 
     public function qrCodes(): HasMany
     {
@@ -60,8 +70,22 @@ class Branch extends Model
             ->withTimestamps();
     }
 
+    /* ============================================================
+     |  Scopes
+     ============================================================ */
+
+    public function scopeMain($query)
+    {
+        return $query->where('is_main', true);
+    }
+
     public function scopeActive($query)
     {
         return $query->where('is_active', true);
+    }
+
+    public function scopeOnlinePaused($query)
+    {
+        return $query->where('is_online_paused', true);
     }
 }
