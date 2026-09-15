@@ -17,6 +17,9 @@ return new class extends Migration
             $table->decimal('lng', 10, 7);
             $table->unsignedInteger('default_radius_meters')->default(100);
             $table->boolean('is_active')->default(true);
+                    $table->string('logo')->nullable();
+            $table->json('social_links')->nullable();
+            $table->boolean('is_main')->default(false);
             $table->timestamps();
         });
     }
