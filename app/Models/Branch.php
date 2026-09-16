@@ -26,6 +26,8 @@ class Branch extends Model
         'paused_at',
         'logo',
         'social_links',
+        'current_prep_offset_minutes',
+        'prep_offset_updated_at',
     ];
 
     protected $casts = [
@@ -37,6 +39,8 @@ class Branch extends Model
         'is_online_paused'      => 'boolean',
         'paused_at'             => 'datetime',
         'social_links'          => 'array',
+        'current_prep_offset_minutes' => 'integer',
+        'prep_offset_updated_at' => 'datetime',
     ];
 
     /* ============================================================

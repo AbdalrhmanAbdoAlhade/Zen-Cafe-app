@@ -30,25 +30,35 @@ class OnlineMenuController extends Controller
 /**
      * جلب جميع الفروع المفعلة للعميل
      */
-    public function index(): JsonResponse
-    {
-        $branches = Branch::where('is_active', true)
-            ->select([
-                'id',
-                'name_ar',
-                'name_en',
-                'address',
-                'lat',
-                'lng',
-                'is_online_paused',
-                'pause_reason'
-            ])
-            ->get();
+public function index(): JsonResponse
+{
+    $branches = Branch::where('is_active', true)
+        ->select([
+            'id',
+            'name_ar',
+            'name_en',
+            'address_ar',
+            'address_en',
+            'logo',
+            'social_links',
+            'lat',
+            'lng',
+            'default_radius_meters',
+            'is_active',
+            'is_main',
+            'is_online_paused',
+            'pause_reason',
+            'paused_at',
+            'current_prep_offset_minutes',
+            'created_at',
+            'updated_at',
+        ])
+        ->get();
 
-        return response()->json([
-            'data' => $branches,
-        ]);
-    }
+    return response()->json([
+        'data' => $branches,
+    ]);
+}
     private function branch(int $branchId): Branch
     {
         return Branch::whereKey($branchId)
@@ -64,13 +74,26 @@ public function show(int $branchId): JsonResponse
 
     return response()->json([
         'branch' => [
-            'id'      => $branch->id,
-            'name_ar' => $branch->name_ar,
-            'name_en' => $branch->name_en,
-            'address' => $branch->address,
+            'id'                     => $branch->id,
+            'name_ar'                => $branch->name_ar,
+            'name_en'                => $branch->name_en,
+            'address_ar'             => $branch->address_ar,
+            'address_en'             => $branch->address_en,
+            'logo'                   => $branch->logo,
+            'social_links'           => $branch->social_links,      // ← array بفضل الـ cast
+            'lat'                    => (float) $branch->lat,
+            'lng'                    => (float) $branch->lng,
+            'default_radius_meters'  => (int) $branch->default_radius_meters,
+            'is_active'              => (bool) $branch->is_active,
+            'is_main'                => (bool) $branch->is_main,
+            'is_online_paused'       => (bool) $branch->is_online_paused,
+            'pause_reason'           => $branch->pause_reason,
+            'paused_at'              => $branch->paused_at,
         ],
         'online_ordering_paused' => (bool) $branch->is_online_paused,
         'pause_reason'           => $branch->pause_reason,
+        // وقت الذروة الحالي - يتضاف على وقت تجهيز أي طلب جديد، بيظهر للعميل قبل ما يطلب
+        'current_prep_offset_minutes' => (int) $branch->current_prep_offset_minutes,
         'categories'             => $categories,
     ]);
 }

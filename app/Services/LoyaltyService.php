@@ -35,25 +35,55 @@ class LoyaltyService
      ============================================================ */
 
     /**
-     * التحقق من شروط استبدال النقاط:
-     * 1. الحد الأدنى للاستبدال
-     * 2. الرصيد المتاح للعميل
-     * 3. قيمة النقطة موجبة
-     * 4. قيمة الخصم لا تتجاوز قيمة الطلب
+     * التحقق من إمكانية الاستبدال مع إرجاع سبب واضح للفشل.
+     *
+     * الشروط:
+     *  1. عدد النقاط موجب
+     *  2. خدمة الاستبدال مفعّلة (قيمة النقطة > 0)
+     *  3. النقاط >= الحد الأدنى للاستبدال
+     *  4. النقاط <= رصيد العميل
+     *  5. قيمة الخصم لا تتجاوز قيمة الطلب
+     *
+     * @return string|null  ترجع سبب الفشل، أو null لو كل الشروط سليمة.
      */
-    public function canRedeem(Customer $customer, int $points, float $orderTotal): bool
+    public function validateRedemption(Customer $customer, int $points, float $orderTotal): ?string
     {
         if ($points <= 0) {
-            return false;
+            return 'عدد النقاط المطلوب استخدامه غير صالح.';
         }
 
         $settings = LoyaltySetting::current();
-        $value = (float) $settings->point_redemption_value;
+        $value    = (float) $settings->point_redemption_value;
+        $min      = (int) $settings->minimum_points_to_redeem;
+        $balance  = (int) $customer->loyalty_points_balance;
 
-        return $points >= (int) $settings->minimum_points_to_redeem
-            && $points <= (int) $customer->loyalty_points_balance
-            && $value > 0
-            && ($points * $value) <= ($orderTotal + 0.01);
+        if ($value <= 0) {
+            return 'خدمة استبدال النقاط غير مفعّلة حاليًا. تواصل مع الدعم.';
+        }
+
+        if ($points < $min) {
+            return "الحد الأدنى لاستخدام النقاط هو {$min} نقطة.";
+        }
+
+        if ($points > $balance) {
+            return "رصيدك الحالي {$balance} نقطة فقط، وطلبت استخدام {$points} نقطة.";
+        }
+
+        $discount = round($points * $value, 2);
+
+        if ($discount > $orderTotal + 0.01) {
+            return 'قيمة الخصم الناتجة عن النقاط أكبر من قيمة الطلب. قلّل عدد النقاط المطلوبة.';
+        }
+
+        return null;
+    }
+
+    /**
+     * التحقق من إمكانية الاستبدال (boolean) — للتوافق مع الكود القديم.
+     */
+    public function canRedeem(Customer $customer, int $points, float $orderTotal): bool
+    {
+        return $this->validateRedemption($customer, $points, $orderTotal) === null;
     }
 
     /* ============================================================
@@ -89,13 +119,18 @@ class LoyaltyService
                 ->firstOrFail();
 
             $settings = LoyaltySetting::current();
-            $value = (float) $settings->point_redemption_value;
-            $amount = round($points * $value, 2);
+            $value    = (float) $settings->point_redemption_value;
+            $amount   = round($points * $value, 2);
 
-            if (! $this->canRedeem($lockedCustomer, $points, (float) $order->total_amount)) {
-                throw new InsufficientLoyaltyPointsException(
-                    'لا يمكن استخدام النقاط المطلوبة: تحقق من الحد الأدنى والرصيد وقيمة الطلب.'
-                );
+            // رسالة خطأ دقيقة حسب السبب الفعلي
+            $reason = $this->validateRedemption(
+                $lockedCustomer,
+                $points,
+                (float) $order->total_amount
+            );
+
+            if ($reason !== null) {
+                throw new InsufficientLoyaltyPointsException($reason);
             }
 
             $lockedCustomer->decrement('loyalty_points_balance', $points);
@@ -107,12 +142,12 @@ class LoyaltyService
             ]);
 
             LoyaltyPointsTransaction::create([
-                'customer_id' => $lockedCustomer->id,
-                'order_id' => $order->id,
-                'type' => LoyaltyPointsTransaction::TYPE_REDEEM,
-                'points' => $points,
+                'customer_id'   => $lockedCustomer->id,
+                'order_id'      => $order->id,
+                'type'          => LoyaltyPointsTransaction::TYPE_REDEEM,
+                'points'        => $points,
                 'balance_after' => $balanceAfter,
-                'description' => 'استبدال نقاط على الطلب',
+                'description'   => 'استبدال نقاط على الطلب',
             ]);
         });
     }
@@ -166,12 +201,12 @@ class LoyaltyService
             $lockedOrder->update(['earned_points' => $points]);
 
             LoyaltyPointsTransaction::create([
-                'customer_id' => $customer->id,
-                'order_id' => $lockedOrder->id,
-                'type' => LoyaltyPointsTransaction::TYPE_EARN,
-                'points' => $points,
+                'customer_id'   => $customer->id,
+                'order_id'      => $lockedOrder->id,
+                'type'          => LoyaltyPointsTransaction::TYPE_EARN,
+                'points'        => $points,
                 'balance_after' => $balanceAfter,
-                'description' => 'اكتساب نقاط بعد تأكيد الدفع',
+                'description'   => 'اكتساب نقاط بعد تأكيد الدفع',
             ]);
 
             return $points;
@@ -230,12 +265,12 @@ class LoyaltyService
             $balanceAfter = (int) $customer->fresh()->loyalty_points_balance;
 
             LoyaltyPointsTransaction::create([
-                'customer_id' => $customer->id,
-                'order_id' => $order->id,
-                'type' => LoyaltyPointsTransaction::TYPE_REFUND,
-                'points' => $points,
+                'customer_id'   => $customer->id,
+                'order_id'      => $order->id,
+                'type'          => LoyaltyPointsTransaction::TYPE_REFUND,
+                'points'        => $points,
                 'balance_after' => $balanceAfter,
-                'description' => 'إرجاع النقاط بعد رفض أو إلغاء الطلب',
+                'description'   => 'إرجاع النقاط بعد رفض أو إلغاء الطلب',
             ]);
 
             return $points;
@@ -295,12 +330,12 @@ class LoyaltyService
             $balanceAfter = (int) $customer->fresh()->loyalty_points_balance;
 
             LoyaltyPointsTransaction::create([
-                'customer_id' => $customer->id,
-                'order_id' => $order->id,
-                'type' => LoyaltyPointsTransaction::TYPE_REVOKE,
-                'points' => $pointsToRevoke,
+                'customer_id'   => $customer->id,
+                'order_id'      => $order->id,
+                'type'          => LoyaltyPointsTransaction::TYPE_REVOKE,
+                'points'        => $pointsToRevoke,
                 'balance_after' => $balanceAfter,
-                'description' => 'سحب النقاط المكتسبة بعد إلغاء الطلب',
+                'description'   => 'سحب النقاط المكتسبة بعد إلغاء الطلب',
             ]);
 
             return $pointsToRevoke;

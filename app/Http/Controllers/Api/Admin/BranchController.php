@@ -140,6 +140,32 @@ class BranchController extends Controller
         return response()->json(['message' => 'تم استئناف الطلبات الخارجية', 'data' => $branch->fresh()]);
     }
 
+    /**
+     * PUT /admin/branches/{branch}/prep-offset  (وكمان /manager/branches/{branch}/prep-offset)
+     * "زمن تجهيز الطلب المسبق" - رقم بالدقايق بيدخله مدير الفرع وقت الذروة.
+     * بيتضاف تلقائي فوق preparation_time_minutes بتاعة الأصناف على كل الطلبات
+     * الجديدة (OrderService::create) من غير ما يأثر على الطلبات القايمة أصلاً،
+     * وبيظهر للعميل في المنيو قبل ما يطلب.
+     */
+    public function updatePrepOffset(Request $request, Branch $branch)
+    {
+        $data = $request->validate([
+            'current_prep_offset_minutes' => ['required', 'integer', 'min:0', 'max:180'],
+        ]);
+
+        $branch->update([
+            'current_prep_offset_minutes' => $data['current_prep_offset_minutes'],
+            'prep_offset_updated_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => $data['current_prep_offset_minutes'] > 0
+                ? 'تم تحديث زمن تجهيز الطلب المسبق - هيتضاف على كل الطلبات الجديدة تلقائيًا.'
+                : 'تم إلغاء زمن الذروة الإضافي - الطلبات هترجع لوقتها الطبيعي.',
+            'data' => $branch->fresh(),
+        ]);
+    }
+
     public function destroy(Branch $branch)
     {
         if ($branch->tables()->exists() || $branch->staff()->exists() || $branch->orders()->exists()) {

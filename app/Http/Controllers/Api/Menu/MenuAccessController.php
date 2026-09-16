@@ -31,6 +31,8 @@ class MenuAccessController extends Controller
                 'name_ar' => $branch->name_ar,
                 'name_en' => $branch->name_en,
             ],
+            // وقت الذروة الحالي - يتضاف على وقت تجهيز أي طلب جديد، بيظهر للعميل قبل ما يطلب
+            'current_prep_offset_minutes' => (int) $branch->current_prep_offset_minutes,
         ]);
     }
 

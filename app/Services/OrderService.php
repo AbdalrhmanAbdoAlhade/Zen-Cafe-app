@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Events\OrderCreated;
 use App\Exceptions\OrderItemUnavailableException;
+use App\Exceptions\ReorderUnavailableException;
 use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\MenuOptionValue;
@@ -30,6 +31,73 @@ class OrderService
     public function createOnlineOrder(Branch $branch, array $payload): array
     {
         return $this->create($branch, $payload, null, true);
+    }
+
+    /**
+     * إعادة طلب سابق - بدون مفهوم "سلة" منفصلة، بيبني payload من نفس أصناف
+     * الطلب القديم وبينادي createOnlineOrder() العادية، يعني بنفس شروط
+     * العميل تمامًا: نفس فحص التوفر، السعر الحالي (مش القديم)، ونفس منطق الولاء.
+     *
+     * الأصناف اللي بقت غير متاحة (في المنيو أو في الفرع أو أونلاين) بيتم
+     * تجاهلها وترجع في skipped_items بدل ما تفشل الطلب بالكامل.
+     *
+     * @throws ReorderUnavailableException لو مفيش أي صنف متاح
+     */
+    public function reorder(Customer $customer, Order $sourceOrder, int $redeemedPoints = 0): array
+    {
+        $sourceOrder->loadMissing('items.menuItem', 'items.options');
+        $branch = $sourceOrder->branch;
+
+        $items = [];
+        $skipped = [];
+
+        foreach ($sourceOrder->items as $orderItem) {
+            // أصناف المتجر (product_variant_id) مش مدعومة في إعادة الطلب - منيو بس
+            if (!$orderItem->menu_item_id) {
+                continue;
+            }
+
+            $stillAvailable = $branch->menuItems()
+                ->wherePivot('is_available', true)
+                ->where('menu_items.id', $orderItem->menu_item_id)
+                ->where('menu_items.is_available', true)
+                ->where('menu_items.is_available_online', true)
+                ->exists();
+
+            if (!$stillAvailable) {
+                $skipped[] = [
+                    'menu_item_id' => $orderItem->menu_item_id,
+                    'name_ar' => $orderItem->menuItem->name_ar ?? null,
+                    'name_en' => $orderItem->menuItem->name_en ?? null,
+                ];
+                continue;
+            }
+
+            $items[] = [
+                'menu_item_id' => $orderItem->menu_item_id,
+                'quantity' => $orderItem->quantity,
+                'notes' => $orderItem->notes,
+                'option_value_ids' => $orderItem->options->pluck('menu_option_value_id')->all(),
+            ];
+        }
+
+        if (empty($items)) {
+            throw new ReorderUnavailableException();
+        }
+
+        $result = $this->createOnlineOrder($branch, [
+            'customer' => [
+                'phone' => $customer->phone,
+                'name' => $customer->name,
+                'email' => $customer->email,
+            ],
+            'items' => $items,
+            'redeemed_points' => $redeemedPoints,
+        ]);
+
+        $result['skipped_items'] = $skipped;
+
+        return $result;
     }
 
     /**
@@ -158,10 +226,14 @@ class OrderService
                 $maxPrep = max($maxPrep, $prep);
             }
 
+            // زمن تجهيز الطلب المسبق: أوفست بيضيفه مدير الفرع وقت الذروة،
+            // بيتحسب على كل الطلبات الجديدة تلقائيًا فوق أوقات الأصناف.
+            $totalPrep = $maxPrep + (int) $branch->current_prep_offset_minutes;
+
             $order->update([
                 'total_amount' => $total,
-                'estimated_preparation_minutes' => $maxPrep,
-                'estimated_ready_at' => now()->addMinutes($maxPrep),
+                'estimated_preparation_minutes' => $totalPrep,
+                'estimated_ready_at' => now()->addMinutes($totalPrep),
             ]);
 
             app(LoyaltyService::class)->redeemPoints(
