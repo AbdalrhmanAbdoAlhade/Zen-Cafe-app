@@ -61,8 +61,8 @@ Route::post('staff/login', [StaffAuthController::class, 'login']);
 | Public - Online Menu (المنيو الأونلاين)
 |--------------------------------------------------------------------------
 */
-Route::get('branches', [OnlineMenuController::class, 'index']);
 Route::get('online-menu/{branchId}/items/{itemId}', [OnlineMenuController::class, 'itemDetails']);
+Route::get('branches', [OnlineMenuController::class, 'index']);
 
 Route::prefix('online-menu/{branchId}')->group(function () {
     Route::get('/', [OnlineMenuController::class, 'show']);
@@ -102,7 +102,7 @@ Route::middleware('auth:customer')->group(function () {
     Route::get('customer/profile/orders', [CustomerProfileController::class, 'orders']);
     Route::get('customer/profile/orders/{order}', [CustomerProfileController::class, 'orderDetails']);
 
-    // 🆕 إعادة طلب سابق
+    // 🆕 إعادة طلب سابق - بدون سلة، بنفس شروط العميل
     Route::post('customer/profile/orders/{order}/reorder', [CustomerProfileController::class, 'reorder']);
 });
 
@@ -125,7 +125,7 @@ Route::middleware('auth:sanctum')
 
         /*
         |------------------------------------------------------------------
-        | Admin - Read Operations (super_admin, admin, viewer)
+        | Admin - Read Operations (متاح لكل الأدمنز: super_admin, admin, viewer)
         |------------------------------------------------------------------
         */
         // الفروع
@@ -172,7 +172,7 @@ Route::middleware('auth:sanctum')
         | Admin - Write Operations (super_admin + admin فقط)
         |------------------------------------------------------------------
         */
-        Route::middleware('user.role:super_admin,admin')->group(function () {
+        Route::middleware('user.role:super_admin,admin,manager')->group(function () {
 
             // ===== الفروع =====
             Route::post('branches', [BranchController::class, 'store']);
@@ -180,6 +180,7 @@ Route::middleware('auth:sanctum')
             Route::post('branches/{branch}/set-main', [BranchController::class, 'setMain']);
             Route::post('branches/{branch}/pause', [BranchController::class, 'pause']);
             Route::post('branches/{branch}/resume', [BranchController::class, 'resume']);
+            // 🆕 زمن تجهيز الطلب المسبق (وقت الذروة) - أدمن
             Route::put('branches/{branch}/prep-offset', [BranchController::class, 'updatePrepOffset']);
 
             // ===== تصنيفات المتجر =====
@@ -277,17 +278,6 @@ Route::middleware('auth:sanctum')
 
 /*
 |--------------------------------------------------------------------------
-| Manager (role: manager فقط - كتابة)
-|--------------------------------------------------------------------------
-*/
-Route::middleware(['auth:staff,sanctum', 'staff.role:manager'])
-    ->prefix('manager')
-    ->group(function () {
-        Route::put('branches/{branch}/prep-offset', [BranchController::class, 'updatePrepOffset']);
-    });
-
-/*
-|--------------------------------------------------------------------------
 | Cashier (role: cashier, manager + admin read-only)
 |--------------------------------------------------------------------------
 */
@@ -296,6 +286,7 @@ Route::middleware(['auth:staff,sanctum', 'staff.role:cashier,manager'])
     ->group(function () {
         // 📖 read — متاح للأدمن
         Route::get('orders', [CashierOrderController::class, 'index']);
+        Route::put('branches/{branch}/prep-offset', [BranchController::class, 'updatePrepOffset']);
 
         // ✍️ write — للموظفين بس (الأدمن بيترفض من الكنترولر)
         Route::post('orders/{order}/accept', [CashierOrderController::class, 'accept']);
@@ -318,4 +309,16 @@ Route::middleware(['auth:staff,sanctum', 'staff.role:kitchen,manager'])
         // ✍️ write — للموظفين بس (الأدمن بيترفض من الكنترولر)
         Route::post('orders/{order}/start-preparing', [KitchenOrderController::class, 'startPreparing']);
         Route::post('orders/{order}/mark-ready', [KitchenOrderController::class, 'markReady']);
+    });
+
+/*
+|--------------------------------------------------------------------------
+| 🆕 Manager (role: manager) - عمليات مدير الفرع
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth:staff,sanctum', 'staff.role:manager'])
+    ->prefix('manager')
+    ->group(function () {
+        // زمن تجهيز الطلب المسبق (وقت الذروة) - نفس دالة الأدمن، متاحة لمدير الفرع بس
+        Route::put('branches/{branch}/prep-offset', [BranchController::class, 'updatePrepOffset']);
     });
