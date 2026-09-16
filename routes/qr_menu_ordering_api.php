@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\Auth\CustomerAuthController;
 use App\Http\Controllers\Api\Auth\StaffAuthController;
 use App\Http\Controllers\Api\Cashier\CashierOrderController;
 use App\Http\Controllers\Api\Customer\CustomerLoyaltyController;
+use App\Http\Controllers\Api\Customer\CustomerProfileController;
 use App\Http\Controllers\Api\Kitchen\KitchenOrderController;
 use App\Http\Controllers\Api\Menu\MenuAccessController;
 use App\Http\Controllers\Api\Menu\MenuOrderController;
@@ -60,8 +61,8 @@ Route::post('staff/login', [StaffAuthController::class, 'login']);
 | Public - Online Menu (المنيو الأونلاين)
 |--------------------------------------------------------------------------
 */
-Route::get('online-menu/{branchId}/items/{itemId}', [OnlineMenuController::class, 'itemDetails']);
 Route::get('branches', [OnlineMenuController::class, 'index']);
+Route::get('online-menu/{branchId}/items/{itemId}', [OnlineMenuController::class, 'itemDetails']);
 
 Route::prefix('online-menu/{branchId}')->group(function () {
     Route::get('/', [OnlineMenuController::class, 'show']);
@@ -90,7 +91,19 @@ Route::prefix('menu/{token}')->group(function () {
 |==========================================================================
 */
 Route::middleware('auth:customer')->group(function () {
+    // نقاط الولاء وسجل الحركات
     Route::get('customer/loyalty', [CustomerLoyaltyController::class, 'show']);
+
+    // 🆕 بروفايل العميل: بياناته + نقاط الولاء + إحصائياته + آخر 5 طلبات
+    Route::get('customer/profile', [CustomerProfileController::class, 'show']);
+    Route::patch('customer/profile', [CustomerProfileController::class, 'update']);
+
+    // 🆕 طلبات العميل مع الفلترة (status / order_type / shipping_status / branch_id / from / to / sort)
+    Route::get('customer/profile/orders', [CustomerProfileController::class, 'orders']);
+    Route::get('customer/profile/orders/{order}', [CustomerProfileController::class, 'orderDetails']);
+
+    // 🆕 إعادة طلب سابق
+    Route::post('customer/profile/orders/{order}/reorder', [CustomerProfileController::class, 'reorder']);
 });
 
 /*
@@ -112,7 +125,7 @@ Route::middleware('auth:sanctum')
 
         /*
         |------------------------------------------------------------------
-        | Admin - Read Operations (متاح لكل الأدمنز: super_admin, admin, viewer)
+        | Admin - Read Operations (super_admin, admin, viewer)
         |------------------------------------------------------------------
         */
         // الفروع
@@ -167,6 +180,7 @@ Route::middleware('auth:sanctum')
             Route::post('branches/{branch}/set-main', [BranchController::class, 'setMain']);
             Route::post('branches/{branch}/pause', [BranchController::class, 'pause']);
             Route::post('branches/{branch}/resume', [BranchController::class, 'resume']);
+            Route::put('branches/{branch}/prep-offset', [BranchController::class, 'updatePrepOffset']);
 
             // ===== تصنيفات المتجر =====
             Route::post('product-categories', [ProductCategoryController::class, 'store']);
@@ -260,6 +274,17 @@ Route::middleware('auth:sanctum')
 | الأدمن يقدر يشوف (GET) فقط، ممنوع من العمليات التعديلية (POST)
 |==========================================================================
 */
+
+/*
+|--------------------------------------------------------------------------
+| Manager (role: manager فقط - كتابة)
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth:staff,sanctum', 'staff.role:manager'])
+    ->prefix('manager')
+    ->group(function () {
+        Route::put('branches/{branch}/prep-offset', [BranchController::class, 'updatePrepOffset']);
+    });
 
 /*
 |--------------------------------------------------------------------------
