@@ -9,9 +9,10 @@ use App\Models\Staff;
 
 class OrderStatusService
 {
-    public function __construct(
-        private readonly LoyaltyService $loyaltyService,
-        private readonly StockService $stockService,
+   public function __construct(
+    private readonly LoyaltyService $loyaltyService,
+    private readonly StockService $stockService,
+    private readonly CouponService $couponService,
     ) {
     }
 
@@ -42,9 +43,11 @@ class OrderStatusService
 
         $order->update($updates);
 
-        if (in_array($newStatus, [Order::STATUS_REJECTED, Order::STATUS_CANCELLED], true)) {
-            $this->loyaltyService->refundRedeemedPoints($order->fresh());
-        }
+       if (in_array($newStatus, [Order::STATUS_REJECTED, Order::STATUS_CANCELLED], true)) {
+          $fresh = $order->fresh();
+          $this->loyaltyService->refundRedeemedPoints($fresh);
+          $this->couponService->reverseRedemption($fresh);
+      }
 
         $order->statusLogs()->create([
             'status' => $newStatus,
@@ -72,9 +75,11 @@ class OrderStatusService
 
         $order->update(['status' => $newStatus]);
 
-        if (in_array($newStatus, [Order::STATUS_CANCELLED, Order::STATUS_REFUNDED], true)) {
-            $this->stockService->refundForOrder($order->fresh());
-        }
+       if (in_array($newStatus, [Order::STATUS_CANCELLED, Order::STATUS_REFUNDED], true)) {
+        $fresh = $order->fresh();
+        $this->stockService->refundForOrder($fresh);
+        $this->couponService->reverseRedemption($fresh);
+          }
 
         $order->statusLogs()->create([
             'status' => $newStatus,

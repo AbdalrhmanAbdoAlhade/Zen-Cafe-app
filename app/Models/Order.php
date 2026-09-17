@@ -40,6 +40,10 @@ class Order extends Model
         'fulfillment_type',
         'payment_gateway',
         'payment_reference',
+        'coupon_id',
+        'coupon_code',
+        'coupon_discount',
+        'free_shipping',
     ];
 
     protected $casts = [
@@ -50,8 +54,14 @@ class Order extends Model
         'estimated_preparation_minutes' => 'integer',
         'estimated_ready_at' => 'datetime',
         'received_at' => 'datetime',
+        'coupon_discount' => 'decimal:2',
+        'free_shipping'   => 'boolean',
     ];
 
+  public function coupon(): BelongsTo
+{
+    return $this->belongsTo(Coupon::class);
+}
     public function branch(): BelongsTo
     {
         return $this->belongsTo(Branch::class);
@@ -97,10 +107,15 @@ class Order extends Model
         return $this->hasOne(OrderShipment::class);
     }
 
-    public function payableAmount(): float
-    {
-        return max(0, round((float) $this->total_amount - (float) $this->redeemed_amount, 2));
-    }
+   public function payableAmount(): float
+{
+    return max(0, round(
+        (float) $this->total_amount
+        - (float) $this->redeemed_amount
+        - (float) $this->coupon_discount,
+        2
+    ));
+}
 
     /**
      * خريطة الانتقالات المسموحة بين الحالات لطلبات المنيو (in_branch / pre_order).

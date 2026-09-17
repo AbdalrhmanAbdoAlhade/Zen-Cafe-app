@@ -13,6 +13,8 @@ use Illuminate\Support\Str;
 
 class ProductController extends Controller
 {
+  use \App\Traits\HandlesWebpImages;
+  
     public function index(Request $request)
     {
         $products = Product::with(['category', 'images', 'variants'])
@@ -54,30 +56,30 @@ class ProductController extends Controller
         $data['is_available'] = $data['is_available'] ?? true;
         $data['is_featured'] = $data['is_featured'] ?? false;
 
-        $product = DB::transaction(function () use ($data, $request) {
-            $product = Product::create(collect($data)->except(['images', 'variants'])->all());
+      $product = DB::transaction(function () use ($data, $request) {
+    $product = Product::create(collect($data)->except(['images', 'variants'])->all());
 
-            foreach ($data['variants'] as $i => $variantData) {
-                ProductVariant::create([
-                    'product_id' => $product->id,
-                    'attributes' => $variantData['attributes'] ?? null,
-                    'price_override' => $variantData['price_override'] ?? null,
-                    'sku' => $variantData['sku'] ?? null,
-                    'stock_quantity' => $variantData['stock_quantity'],
-                    'low_stock_threshold' => $variantData['low_stock_threshold'] ?? 5,
-                ]);
-            }
+    foreach ($data['variants'] as $i => $variantData) {
+        ProductVariant::create([
+            'product_id' => $product->id,
+            'attributes' => $variantData['attributes'] ?? null,
+            'price_override' => $variantData['price_override'] ?? null,
+            'sku' => $variantData['sku'] ?? null,
+            'stock_quantity' => $variantData['stock_quantity'],
+            'low_stock_threshold' => $variantData['low_stock_threshold'] ?? 5,
+        ]);
+    }
 
-            foreach ($request->file('images', []) as $index => $image) {
-                ProductImage::create([
-                    'product_id' => $product->id,
-                    'image_path' => $image->store('products', 'public'),
-                    'sort_order' => $index,
-                ]);
-            }
+        foreach ($request->file('images', []) as $index => $image) {
+            ProductImage::create([
+                'product_id' => $product->id,
+                'image_path' => $this->storeAsWebp($image, 'products', quality: 80, maxWidth: 1200),
+                'sort_order' => $index,
+            ]);
+        }
 
-            return $product;
-        });
+        return $product;
+    });
 
         return response()->json([
             'message' => 'تم إنشاء المنتج بنجاح',

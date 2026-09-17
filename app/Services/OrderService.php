@@ -20,6 +20,7 @@ class OrderService
     public function __construct(
         private readonly CartValidationService $cartValidation,
         private readonly StockService $stockService,
+        private readonly CouponService $couponService,
     ) {
     }
 
@@ -151,9 +152,53 @@ class OrderService
                 $total += $shippingFee;
             }
 
-            $order->update(['total_amount' => $total]);
+         $order->update(['total_amount' => $total]);
 
-            event(new OrderCreated($order));
+        // تطبيق الكوبون إن وُجد (متجر)
+        if (!empty($payload['coupon_code'])) {
+            $shippingFee = 0;
+            if ($order->shipment) {
+                $shippingFee = (float) $order->shipment->shipping_fee;
+            }
+
+            $itemsForCoupon = $order->items->map(function ($oi) {
+                $productId = $oi->productVariant?->product_id;
+                $categoryId = $oi->productVariant?->product?->product_category_id;
+                return [
+                    'id'          => $productId,
+                    'type'        => 'product',
+                    'qty'         => $oi->quantity,
+                    'unit_price'  => (float) $oi->unit_price,
+                    'category_id' => $categoryId,
+                ];
+            })->all();
+
+            $subtotal = $total - $shippingFee;
+
+            $result = $this->couponService->validate(
+                code: $payload['coupon_code'],
+                subtotal: $subtotal,
+                items: $itemsForCoupon,
+                branchId: $branch->id,
+                customer: $customer,
+                channel: 'store',
+                shippingFee: $shippingFee,
+            );
+
+            $this->couponService->applyToOrder(
+                $order,
+                $result['coupon'],
+                $result['discount_amount'],
+                $result['free_shipping']
+            );
+
+            if ($result['free_shipping'] && $shippingFee > 0) {
+                $order->update(['total_amount' => $total - $shippingFee]);
+            }
+        }
+
+        event(new OrderCreated($order));
+
 
             return [
                 'order' => $order->fresh(['items.productVariant.product', 'branch', 'shipment']),
@@ -230,13 +275,41 @@ class OrderService
             // بيتحسب على كل الطلبات الجديدة تلقائيًا فوق أوقات الأصناف.
             $totalPrep = $maxPrep + (int) $branch->current_prep_offset_minutes;
 
-            $order->update([
-                'total_amount' => $total,
-                'estimated_preparation_minutes' => $totalPrep,
-                'estimated_ready_at' => now()->addMinutes($totalPrep),
-            ]);
+           $order->update([
+    'total_amount' => $total,
+    'estimated_preparation_minutes' => $totalPrep,
+    'estimated_ready_at' => now()->addMinutes($totalPrep),
+      ]);
 
-            app(LoyaltyService::class)->redeemPoints(
+      // تطبيق الكوبون إن وُجد
+      if (!empty($payload['coupon_code'])) {
+          $channel = $online ? 'online_menu' : 'qr_menu';
+
+          $itemsForCoupon = $order->items->map(fn ($oi) => [
+              'id'         => $oi->menu_item_id,
+              'type'       => 'menu_item',
+              'qty'        => $oi->quantity,
+              'unit_price' => (float) $oi->unit_price,
+          ])->all();
+
+          $result = $this->couponService->validate(
+              code: $payload['coupon_code'],
+              subtotal: $total,
+              items: $itemsForCoupon,
+              branchId: $branch->id,
+              customer: $customer,
+              channel: $channel,
+          );
+
+          $this->couponService->applyToOrder(
+              $order,
+              $result['coupon'],
+              $result['discount_amount'],
+              $result['free_shipping']
+          );
+      }
+
+      app(LoyaltyService::class)->redeemPoints(
                 $order,
                 $customer,
                 (int)($payload['redeemed_points'] ?? 0)
@@ -344,6 +417,13 @@ class OrderService
             'payable_amount' => $order->payableAmount(),
             'earned_points' => (int)$order->earned_points,
             'items' => $order->items->map(fn ($item) => $this->serializeOrderItem($item))->values(),
+            'redeemed_points'  => (int) $order->redeemed_points,
+            'redeemed_amount'  => (float) $order->redeemed_amount,
+            'coupon_code'      => $order->coupon_code,
+            'coupon_discount'  => (float) $order->coupon_discount,
+            'free_shipping'    => (bool) $order->free_shipping,
+            'payable_amount'   => $order->payableAmount(),
+            'earned_points'    => (int) $order->earned_points,
         ];
 
         if ($order->order_type === 'pre_order') {
