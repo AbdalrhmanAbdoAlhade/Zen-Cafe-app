@@ -24,6 +24,8 @@ use App\Http\Controllers\Api\Store\ProductBrowseController;
 use App\Http\Controllers\Api\Admin\ProductController;
 use App\Http\Controllers\Api\Admin\ProductCategoryController;
 use App\Http\Controllers\Api\Admin\StoreOrderManagementController;
+use App\Http\Controllers\Api\Admin\CouponController;
+use App\Http\Controllers\Api\CouponValidationController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -55,6 +57,12 @@ Route::prefix('store')->group(function () {
 Route::post('admin/login', [AdminAuthController::class, 'login']);
 Route::post('customer/login', [CustomerAuthController::class, 'login']);
 Route::post('staff/login', [StaffAuthController::class, 'login']);
+/*
+|--------------------------------------------------------------------------
+| Public - Coupon Validation
+|--------------------------------------------------------------------------
+*/
+Route::post('coupons/validate', [CouponValidationController::class, 'validate']);
 
 /*
 |--------------------------------------------------------------------------
@@ -174,6 +182,15 @@ Route::middleware('auth:sanctum')
         */
         Route::middleware('user.role:super_admin,admin,manager')->group(function () {
 
+          // ===== الكوبونات =====
+            Route::get('coupons', [CouponController::class, 'index']);
+            Route::post('coupons', [CouponController::class, 'store']);
+            Route::get('coupons/{coupon}', [CouponController::class, 'show']);
+            Route::put('coupons/{coupon}', [CouponController::class, 'update']);
+            Route::delete('coupons/{coupon}', [CouponController::class, 'destroy']);
+            Route::post('coupons/{coupon}/toggle', [CouponController::class, 'toggle']);
+            Route::get('coupons/{coupon}/redemptions', [CouponController::class, 'redemptions']);
+          
             // ===== الفروع =====
             Route::post('branches', [BranchController::class, 'store']);
             Route::post('branches/{branch}', [BranchController::class, 'update']);
