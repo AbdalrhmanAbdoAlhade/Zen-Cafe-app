@@ -29,7 +29,7 @@ class MenuItemController extends Controller
 
         $items = $query->orderBy('id', 'desc')->paginate(20);
 
-        return response()->json($items);
+        return response()->json($items->through(fn (MenuItem $i) => $this->withPricing($i)));
     }
 
     public function store(Request $request)
@@ -115,7 +115,7 @@ class MenuItemController extends Controller
 
         return response()->json([
             'message' => 'تم إنشاء الصنف بنجاح',
-            'data'    => $item,
+            'data'    => $this->withPricing($item),
         ], 201);
     }
 
@@ -123,7 +123,7 @@ class MenuItemController extends Controller
     {
         $item->load(['category', 'options.values', 'branches']);
 
-        return response()->json(['data' => $item]);
+        return response()->json(['data' => $this->withPricing($item)]);
     }
 
     public function update(Request $request, MenuItem $item)
@@ -159,7 +159,7 @@ class MenuItemController extends Controller
 
         return response()->json([
             'message' => 'تم تحديث الصنف',
-            'data'    => $item->fresh(['category', 'options.values']),
+            'data'    => $this->withPricing($item->fresh(['category', 'options.values'])),
         ]);
     }
 
@@ -170,6 +170,28 @@ class MenuItemController extends Controller
         $item->delete(); // cascade على options + menu_item_branch
 
         return response()->json(['message' => 'تم حذف الصنف']);
+    }
+
+    /**
+     * يضيف pricing للصنف (بناءً على base_price)، ولو الفروع متحملة (show)
+     * بيضيف pricing لكل فرع بناءً على price_override بتاعه.
+     * price (بدون ضريبة) + vat (%) + vat_amount + total_price (شامل الضريبة).
+     */
+    private function withPricing(MenuItem $item): MenuItem
+    {
+        $item->setAttribute('pricing', $item->priceWithVat());
+
+        if ($item->relationLoaded('branches')) {
+            foreach ($item->branches as $branch) {
+                $override = $branch->pivot->price_override;
+
+                $branch->setAttribute('pricing', $item->priceWithVat(
+                    $override !== null ? (float) $override : null
+                ));
+            }
+        }
+
+        return $item;
     }
 
     // ===== Options =====

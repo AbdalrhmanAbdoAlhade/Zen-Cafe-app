@@ -22,7 +22,7 @@ class ProductController extends Controller
             ->orderBy('id', 'desc')
             ->paginate(20);
 
-        return response()->json($products);
+        return response()->json($products->through(fn (Product $p) => $this->withPricing($p)));
     }
 
     public function store(Request $request)
@@ -34,6 +34,7 @@ class ProductController extends Controller
             'description_ar' => ['nullable', 'string'],
             'description_en' => ['nullable', 'string'],
             'base_price' => ['required', 'numeric', 'min:0'],
+            'vat' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'is_available' => ['nullable', 'boolean'],
             'is_featured' => ['nullable', 'boolean'],
             'sku' => ['nullable', 'string', 'max:100', 'unique:products,sku'],
@@ -83,7 +84,7 @@ class ProductController extends Controller
 
         return response()->json([
             'message' => 'تم إنشاء المنتج بنجاح',
-            'data' => $product->fresh(['category', 'images', 'variants']),
+            'data' => $this->withPricing($product->fresh(['category', 'images', 'variants'])),
         ], 201);
     }
 
@@ -91,7 +92,7 @@ class ProductController extends Controller
     {
         $product->load(['category', 'images', 'variants', 'reviews']);
 
-        return response()->json(['data' => $product]);
+        return response()->json(['data' => $this->withPricing($product)]);
     }
 
     public function update(Request $request, Product $product)
@@ -103,6 +104,7 @@ class ProductController extends Controller
             'description_ar' => ['nullable', 'string'],
             'description_en' => ['nullable', 'string'],
             'base_price' => ['sometimes', 'numeric', 'min:0'],
+            'vat' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'is_available' => ['nullable', 'boolean'],
             'is_featured' => ['nullable', 'boolean'],
             'country_of_origin' => ['nullable', 'string', 'max:100'],
@@ -114,7 +116,7 @@ class ProductController extends Controller
 
         return response()->json([
             'message' => 'تم تحديث المنتج',
-            'data' => $product->fresh(['category', 'images', 'variants']),
+            'data' => $this->withPricing($product->fresh(['category', 'images', 'variants'])),
         ]);
     }
 
@@ -133,6 +135,25 @@ class ProductController extends Controller
         $product->delete();
 
         return response()->json(['message' => 'تم حذف المنتج']);
+    }
+
+    /**
+     * يضيف pricing للمنتج (بناءً على base_price) ولكل variant (بناءً على سعره الفعلي):
+     * price (بدون ضريبة) + vat (%) + vat_amount + total_price (شامل الضريبة).
+     */
+    private function withPricing(Product $product): Product
+    {
+        $product->setAttribute('pricing', $product->priceWithVat());
+
+        if ($product->relationLoaded('variants')) {
+            foreach ($product->variants as $variant) {
+                $variant->setAttribute('pricing', $product->priceWithVat(
+                    $variant->price_override !== null ? (float) $variant->price_override : null
+                ));
+            }
+        }
+
+        return $product;
     }
 
     /**

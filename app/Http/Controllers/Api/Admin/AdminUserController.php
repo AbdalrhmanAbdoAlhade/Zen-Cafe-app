@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\Customer; 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -14,14 +15,15 @@ class AdminUserController extends Controller
     /**
      * عرض قائمة جميع المستخدمين (الأدمنز)
      */
-    public function index(): JsonResponse
-    {
-        return response()->json([
-            'data' => User::select('id', 'name', 'email', 'role', 'created_at')
-                          ->orderByDesc('id')
-                          ->get()
-        ]);
-    }
+   public function index(): JsonResponse
+{
+    return response()->json([
+        'data' => Customer::select('id', 'name', 'email', 'phone', 'tier', 'loyalty_points_balance', 'total_spent', 'created_at')
+                      ->whereIn('tier', ['silver', 'gold'])
+                      ->orderByDesc('total_spent')
+                      ->get()
+    ]);
+}
 
     /**
      * إنشاء مستخدم أدمن جديد

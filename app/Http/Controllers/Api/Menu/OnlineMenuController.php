@@ -49,6 +49,8 @@ public function index(): JsonResponse
             'is_online_paused',
             'pause_reason',
             'paused_at',
+          'email',
+            'phone',
             'current_prep_offset_minutes',
             'created_at',
             'updated_at',
@@ -80,6 +82,8 @@ public function show(int $branchId): JsonResponse
             'address_ar'             => $branch->address_ar,
             'address_en'             => $branch->address_en,
             'logo'                   => $branch->logo,
+             'email'                  => $branch->email,
+            'phone'                  => $branch->phone,
             'social_links'           => $branch->social_links,      // ← array بفضل الـ cast
             'lat'                    => (float) $branch->lat,
             'lng'                    => (float) $branch->lng,

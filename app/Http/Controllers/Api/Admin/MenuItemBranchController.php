@@ -14,6 +14,15 @@ class MenuItemBranchController extends Controller
     {
         $branches = $item->branches()->get();
 
+        // سعر الصنف في كل فرع (price_override لو موجود) + الضريبة
+        $branches->each(function ($branch) use ($item) {
+            $override = $branch->pivot->price_override;
+
+            $branch->setAttribute('pricing', $item->priceWithVat(
+                $override !== null ? (float) $override : null
+            ));
+        });
+
         return response()->json(['data' => $branches]);
     }
 
@@ -84,6 +93,15 @@ class MenuItemBranchController extends Controller
         $items = $branch->menuItems()
             ->with(['category', 'options.values'])
             ->get();
+
+        // سعر الصنف في الفرع ده (price_override لو موجود) + الضريبة
+        $items->each(function ($item) {
+            $override = $item->pivot->price_override;
+
+            $item->setAttribute('pricing', $item->priceWithVat(
+                $override !== null ? (float) $override : null
+            ));
+        });
 
         return response()->json(['data' => $items]);
     }
