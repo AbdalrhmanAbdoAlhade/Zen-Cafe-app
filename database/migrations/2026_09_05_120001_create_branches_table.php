@@ -15,6 +15,8 @@ return new class extends Migration
           $table->string('address');
             $table->decimal('lat', 10, 7);
             $table->decimal('lng', 10, 7);
+           $table->string('email')->nullable();
+            $table->string('phone', 30)->nullable();
             $table->unsignedInteger('default_radius_meters')->default(100);
             $table->boolean('is_active')->default(true);
                     $table->string('logo')->nullable();
