@@ -49,9 +49,15 @@ class OrderPaymentService
             );
         }
 
-        if ($order->order_type === 'store') {
-            throw new \InvalidArgumentException('استخدم مسار دفع المتجر لهذا الطلب.');
-        }
+      // طلب المتجر: مسموح بس لو خريطة المتجر بتسمح بالانتقال لـ paid من حالته الحالية (pending)
+if (
+    $order->order_type === 'store'
+    && ! in_array(Order::STATUS_PAID, Order::allowedStoreTransitions()[$order->status] ?? [], true)
+) {
+    throw new \InvalidArgumentException(
+        "لا يمكن قفل طلب المتجر وهو في حالة: {$order->status}"
+    );
+}
 
         return $this->finalizePayment($order, $staff, $method, $amount, forceStatus: true);
     }

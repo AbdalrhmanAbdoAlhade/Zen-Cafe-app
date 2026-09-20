@@ -6,9 +6,12 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Traits\CalculatesVat;
 
 class Product extends Model
 {
+    use CalculatesVat;
+
     protected $fillable = [
         'category_id',
         'name_ar',
@@ -17,6 +20,7 @@ class Product extends Model
         'description_ar',
         'description_en',
         'base_price',
+        'vat',
         'is_available',
         'is_featured',
         'sku',
@@ -27,6 +31,7 @@ class Product extends Model
 
     protected $casts = [
         'base_price' => 'decimal:2',
+        'vat' => 'decimal:2',
         'is_available' => 'boolean',
         'is_featured' => 'boolean',
         'roast_date' => 'date',

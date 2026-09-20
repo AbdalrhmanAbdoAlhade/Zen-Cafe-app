@@ -24,6 +24,8 @@ class Branch extends Model
         'is_online_paused',
         'pause_reason',
         'paused_at',
+        'email',   // ← جديد
+        'phone', 
         'logo',
         'social_links',
         'current_prep_offset_minutes',
