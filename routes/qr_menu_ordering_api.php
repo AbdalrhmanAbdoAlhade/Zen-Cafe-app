@@ -26,6 +26,10 @@ use App\Http\Controllers\Api\Admin\ProductCategoryController;
 use App\Http\Controllers\Api\Admin\StoreOrderManagementController;
 use App\Http\Controllers\Api\Admin\CouponController;
 use App\Http\Controllers\Api\CouponValidationController;
+use App\Http\Controllers\Api\Chat\CustomerChatController;
+use App\Http\Controllers\Api\Chat\StaffChatController;
+use App\Http\Controllers\Api\Admin\FaqEntryController;
+use App\Http\Controllers\Api\Admin\ChatSettingController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -33,7 +37,13 @@ use Illuminate\Support\Facades\Route;
 | PUBLIC ROUTES (بدون تسجيل دخول)
 |==========================================================================
 */
-
+// عميل (ممكن بدون auth في البداية، أو auth:customer)
+Route::prefix('chat')->group(function () {
+    Route::post('conversations', [CustomerChatController::class, 'start']);
+    Route::post('conversations/{conversation}/messages', [CustomerChatController::class, 'sendMessage']);
+    Route::get('conversations/{conversation}/messages', [CustomerChatController::class, 'messages']);
+    Route::post('conversations/{conversation}/handoff', [CustomerChatController::class, 'handoff']);
+});
 /*
 |--------------------------------------------------------------------------
 | Public - Store (متجر مستلزمات القهوة)
@@ -114,6 +124,13 @@ Route::middleware('auth:customer')->group(function () {
     Route::post('customer/profile/orders/{order}/reorder', [CustomerProfileController::class, 'reorder']);
 });
 
+// موظف
+Route::prefix('staff/chat')->middleware(['auth:staff'])->group(function () {
+    Route::get('conversations', [StaffChatController::class, 'index']);
+    Route::post('conversations/{conversation}/accept', [StaffChatController::class, 'accept']);
+    Route::post('conversations/{conversation}/messages', [StaffChatController::class, 'sendMessage']);
+    Route::post('conversations/{conversation}/close', [StaffChatController::class, 'close']);
+});
 /*
 |==========================================================================
 | ADMIN ROUTES (auth:sanctum → users)
@@ -181,7 +198,13 @@ Route::middleware('auth:sanctum')
         |------------------------------------------------------------------
         */
         Route::middleware('user.role:super_admin,admin,manager')->group(function () {
+			Route::get('chat-settings', [ChatSettingController::class, 'show']);
+            Route::put('chat-settings', [ChatSettingController::class, 'update']);
 
+            Route::apiResource('faq-entries', FaqEntryController::class);
+          
+            Route::get('branches/{branch}/working-hours', [BranchController::class, 'getWorkingHours']);
+            Route::put('branches/{branch}/working-hours', [BranchController::class, 'updateWorkingHours']);
           // ===== الكوبونات =====
             Route::get('coupons', [CouponController::class, 'index']);
             Route::post('coupons', [CouponController::class, 'store']);
@@ -304,7 +327,7 @@ Route::middleware(['auth:staff,sanctum', 'staff.role:cashier,manager'])
         // 📖 read — متاح للأدمن
         Route::get('orders', [CashierOrderController::class, 'index']);
         Route::put('branches/{branch}/prep-offset', [BranchController::class, 'updatePrepOffset']);
-
+        Route::post('orders/{order}/settle-and-pay', [CashierOrderController::class, 'settleAndPay']);
         // ✍️ write — للموظفين بس (الأدمن بيترفض من الكنترولر)
         Route::post('orders/{order}/accept', [CashierOrderController::class, 'accept']);
         Route::post('orders/{order}/reject', [CashierOrderController::class, 'reject']);
