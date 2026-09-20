@@ -43,6 +43,53 @@ class Branch extends Model
         'prep_offset_updated_at' => 'datetime',
     ];
 
+  
+  // في الـ Relations
+public function workingHours(): HasMany
+{
+    return $this->hasMany(BranchWorkingHour::class)->orderBy('day_of_week');
+}
+
+/**
+ * هل الفرع مفتوح دلوقتي؟
+ * بيرجع true لو مفيش مواعيد متسجلة أصلاً (عشان ميكسرش الفروع القديمة).
+ */
+public function isOpenNow(?\Carbon\Carbon $at = null): bool
+{
+    $at = $at ?? now();
+
+    $hour = $this->workingHours()
+        ->where('day_of_week', $at->dayOfWeek)
+        ->first();
+
+    // لو مفيش سجل لليوم ده → نعتبره مفتوح (backward compatible)
+    if (! $hour) {
+        return true;
+    }
+
+    if ($hour->isClosed()) {
+        return false;
+    }
+
+    $current = $at->format('H:i:s');
+
+    // يدعم الحالة اللي بتقفل بعد منتصف الليل (مثلاً 18:00 → 02:00)
+    if ($hour->opens_at <= $hour->closes_at) {
+        return $current >= $hour->opens_at && $current <= $hour->closes_at;
+    }
+
+    // عبر منتصف الليل
+    return $current >= $hour->opens_at || $current <= $hour->closes_at;
+}
+
+/** مواعيد اليوم الحالي */
+public function todayWorkingHours(): ?BranchWorkingHour
+{
+    return $this->workingHours()
+        ->where('day_of_week', now()->dayOfWeek)
+        ->first();
+}
+  
     /* ============================================================
      |  Relations
      ============================================================ */

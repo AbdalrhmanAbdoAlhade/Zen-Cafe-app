@@ -18,11 +18,14 @@ class Customer extends Authenticatable
         'phone',
         'password',
         'loyalty_points_balance',
+      'tier',
+    'total_spent',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+      'total_spent' => 'decimal:2',
     ];
 
     protected $casts = [

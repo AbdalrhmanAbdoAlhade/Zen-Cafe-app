@@ -36,16 +36,16 @@ class OrderService
 
     /**
      * إعادة طلب سابق - بدون مفهوم "سلة" منفصلة، بيبني payload من نفس أصناف
-     * الطلب القديم وبينادي createOnlineOrder() العادية، يعني بنفس شروط
-     * العميل تمامًا: نفس فحص التوفر، السعر الحالي (مش القديم)، ونفس منطق الولاء.
-     *
-     * الأصناف اللي بقت غير متاحة (في المنيو أو في الفرع أو أونلاين) بيتم
-     * تجاهلها وترجع في skipped_items بدل ما تفشل الطلب بالكامل.
+     * الطلب القديم وبينادي createOnlineOrder() العادية.
      *
      * @throws ReorderUnavailableException لو مفيش أي صنف متاح
      */
-    public function reorder(Customer $customer, Order $sourceOrder, int $redeemedPoints = 0): array
-    {
+    public function reorder(
+        Customer $customer,
+        Order $sourceOrder,
+        int $redeemedPoints = 0,
+        ?string $fulfillmentType = null
+    ): array {
         $sourceOrder->loadMissing('items.menuItem', 'items.options');
         $branch = $sourceOrder->branch;
 
@@ -53,8 +53,7 @@ class OrderService
         $skipped = [];
 
         foreach ($sourceOrder->items as $orderItem) {
-            // أصناف المتجر (product_variant_id) مش مدعومة في إعادة الطلب - منيو بس
-            if (!$orderItem->menu_item_id) {
+            if (! $orderItem->menu_item_id) {
                 continue;
             }
 
@@ -65,7 +64,7 @@ class OrderService
                 ->where('menu_items.is_available_online', true)
                 ->exists();
 
-            if (!$stillAvailable) {
+            if (! $stillAvailable) {
                 $skipped[] = [
                     'menu_item_id' => $orderItem->menu_item_id,
                     'name_ar' => $orderItem->menuItem->name_ar ?? null,
@@ -86,6 +85,14 @@ class OrderService
             throw new ReorderUnavailableException();
         }
 
+        // أولوية: القيمة الممررة → نوع الطلب القديم لو كان صالح → pickup افتراضي
+        $resolvedFulfillment = $fulfillmentType
+            ?? (in_array($sourceOrder->fulfillment_type, [
+                Order::FULFILLMENT_PICKUP,
+                Order::FULFILLMENT_DINE_IN,
+            ], true) ? $sourceOrder->fulfillment_type : null)
+            ?? Order::FULFILLMENT_PICKUP;
+
         $result = $this->createOnlineOrder($branch, [
             'customer' => [
                 'phone' => $customer->phone,
@@ -94,6 +101,7 @@ class OrderService
             ],
             'items' => $items,
             'redeemed_points' => $redeemedPoints,
+            'fulfillment_type' => $resolvedFulfillment,
         ]);
 
         $result['skipped_items'] = $skipped;
@@ -103,8 +111,6 @@ class OrderService
 
     /**
      * إنشاء أوردر متجر (منتجات قابلة للشحن أو استلام سريع).
-     * مختلف عن create() - مفيش qr_code، الأوردر مش مرتبط بفرع بالضرورة كمصدر تحضير،
-     * والمخزون بيتخصم فورًا جوه نفس الـ transaction.
      */
     public function createStoreOrder(Branch $branch, array $payload): array
     {
@@ -135,7 +141,8 @@ class OrderService
                 $total += $this->addStoreOrderItem($order, $item);
             }
 
-            if ($payload['fulfillment_type'] === 'shipping') {
+            if ($payload['fulfillment_type'] === Order::FULFILLMENT_SHIPPING
+                || $payload['fulfillment_type'] === 'shipping') {
                 $shippingFee = (float) ($payload['shipping']['fee'] ?? 0);
 
                 OrderShipment::create([
@@ -152,53 +159,52 @@ class OrderService
                 $total += $shippingFee;
             }
 
-         $order->update(['total_amount' => $total]);
+            $order->update(['total_amount' => $total]);
 
-        // تطبيق الكوبون إن وُجد (متجر)
-        if (!empty($payload['coupon_code'])) {
-            $shippingFee = 0;
-            if ($order->shipment) {
-                $shippingFee = (float) $order->shipment->shipping_fee;
+            if (! empty($payload['coupon_code'])) {
+                $shippingFee = 0;
+                if ($order->shipment) {
+                    $shippingFee = (float) $order->shipment->shipping_fee;
+                }
+
+                $itemsForCoupon = $order->items->map(function ($oi) {
+                    $productId = $oi->productVariant?->product_id;
+                    $categoryId = $oi->productVariant?->product?->product_category_id;
+
+                    return [
+                        'id' => $productId,
+                        'type' => 'product',
+                        'qty' => $oi->quantity,
+                        'unit_price' => (float) $oi->unit_price,
+                        'category_id' => $categoryId,
+                    ];
+                })->all();
+
+                $subtotal = $total - $shippingFee;
+
+                $result = $this->couponService->validate(
+                    code: $payload['coupon_code'],
+                    subtotal: $subtotal,
+                    items: $itemsForCoupon,
+                    branchId: $branch->id,
+                    customer: $customer,
+                    channel: 'store',
+                    shippingFee: $shippingFee,
+                );
+
+                $this->couponService->applyToOrder(
+                    $order,
+                    $result['coupon'],
+                    $result['discount_amount'],
+                    $result['free_shipping']
+                );
+
+                if ($result['free_shipping'] && $shippingFee > 0) {
+                    $order->update(['total_amount' => $total - $shippingFee]);
+                }
             }
 
-            $itemsForCoupon = $order->items->map(function ($oi) {
-                $productId = $oi->productVariant?->product_id;
-                $categoryId = $oi->productVariant?->product?->product_category_id;
-                return [
-                    'id'          => $productId,
-                    'type'        => 'product',
-                    'qty'         => $oi->quantity,
-                    'unit_price'  => (float) $oi->unit_price,
-                    'category_id' => $categoryId,
-                ];
-            })->all();
-
-            $subtotal = $total - $shippingFee;
-
-            $result = $this->couponService->validate(
-                code: $payload['coupon_code'],
-                subtotal: $subtotal,
-                items: $itemsForCoupon,
-                branchId: $branch->id,
-                customer: $customer,
-                channel: 'store',
-                shippingFee: $shippingFee,
-            );
-
-            $this->couponService->applyToOrder(
-                $order,
-                $result['coupon'],
-                $result['discount_amount'],
-                $result['free_shipping']
-            );
-
-            if ($result['free_shipping'] && $shippingFee > 0) {
-                $order->update(['total_amount' => $total - $shippingFee]);
-            }
-        }
-
-        event(new OrderCreated($order));
-
+            event(new OrderCreated($order));
 
             return [
                 'order' => $order->fresh(['items.productVariant.product', 'branch', 'shipment']),
@@ -249,12 +255,30 @@ class OrderService
                 $online
             );
 
+            // QR على الطاولة: fulfillment_type = null
+            // منيو أونلاين: إجباري pickup | dine_in
+            $fulfillmentType = null;
+
+            if ($online) {
+                $fulfillmentType = $payload['fulfillment_type'] ?? null;
+
+                if (! in_array($fulfillmentType, [
+                    Order::FULFILLMENT_PICKUP,
+                    Order::FULFILLMENT_DINE_IN,
+                ], true)) {
+                    throw new \InvalidArgumentException(
+                        'طلب المنيو الأونلاين يتطلب fulfillment_type: pickup أو dine_in.'
+                    );
+                }
+            }
+
             $order = Order::create([
                 'branch_id' => $branch->id,
                 'table_id' => $qrCode?->table_id,
                 'qr_code_id' => $qrCode?->id,
                 'customer_id' => $customer?->id,
                 'order_type' => $online ? 'pre_order' : 'in_branch',
+                'fulfillment_type' => $fulfillmentType,
                 'status' => Order::STATUS_PENDING,
                 'total_amount' => 0,
                 'estimated_preparation_minutes' => 0,
@@ -271,48 +295,45 @@ class OrderService
                 $maxPrep = max($maxPrep, $prep);
             }
 
-            // زمن تجهيز الطلب المسبق: أوفست بيضيفه مدير الفرع وقت الذروة،
-            // بيتحسب على كل الطلبات الجديدة تلقائيًا فوق أوقات الأصناف.
             $totalPrep = $maxPrep + (int) $branch->current_prep_offset_minutes;
 
-           $order->update([
-    'total_amount' => $total,
-    'estimated_preparation_minutes' => $totalPrep,
-    'estimated_ready_at' => now()->addMinutes($totalPrep),
-      ]);
+            $order->update([
+                'total_amount' => $total,
+                'estimated_preparation_minutes' => $totalPrep,
+                'estimated_ready_at' => now()->addMinutes($totalPrep),
+            ]);
 
-      // تطبيق الكوبون إن وُجد
-      if (!empty($payload['coupon_code'])) {
-          $channel = $online ? 'online_menu' : 'qr_menu';
+            if (! empty($payload['coupon_code'])) {
+                $channel = $online ? 'online_menu' : 'qr_menu';
 
-          $itemsForCoupon = $order->items->map(fn ($oi) => [
-              'id'         => $oi->menu_item_id,
-              'type'       => 'menu_item',
-              'qty'        => $oi->quantity,
-              'unit_price' => (float) $oi->unit_price,
-          ])->all();
+                $itemsForCoupon = $order->items->map(fn ($oi) => [
+                    'id' => $oi->menu_item_id,
+                    'type' => 'menu_item',
+                    'qty' => $oi->quantity,
+                    'unit_price' => (float) $oi->unit_price,
+                ])->all();
 
-          $result = $this->couponService->validate(
-              code: $payload['coupon_code'],
-              subtotal: $total,
-              items: $itemsForCoupon,
-              branchId: $branch->id,
-              customer: $customer,
-              channel: $channel,
-          );
+                $result = $this->couponService->validate(
+                    code: $payload['coupon_code'],
+                    subtotal: $total,
+                    items: $itemsForCoupon,
+                    branchId: $branch->id,
+                    customer: $customer,
+                    channel: $channel,
+                );
 
-          $this->couponService->applyToOrder(
-              $order,
-              $result['coupon'],
-              $result['discount_amount'],
-              $result['free_shipping']
-          );
-      }
+                $this->couponService->applyToOrder(
+                    $order,
+                    $result['coupon'],
+                    $result['discount_amount'],
+                    $result['free_shipping']
+                );
+            }
 
-      app(LoyaltyService::class)->redeemPoints(
+            app(LoyaltyService::class)->redeemPoints(
                 $order,
                 $customer,
-                (int)($payload['redeemed_points'] ?? 0)
+                (int) ($payload['redeemed_points'] ?? 0)
             );
 
             event(new OrderCreated($order));
@@ -339,13 +360,13 @@ class OrderService
             ->where('menu_items.id', $cartItem['menu_item_id'])
             ->first();
 
-        if (!$item) {
+        if (! $item) {
             throw new OrderItemUnavailableException($cartItem['menu_item_id']);
         }
 
-        $quantity = max(1, (int)($cartItem['quantity'] ?? 1));
-        $unitPrice = (float)($item->pivot->price_override ?? $item->base_price);
-        $prep = (int)$item->preparation_time_minutes;
+        $quantity = max(1, (int) ($cartItem['quantity'] ?? 1));
+        $unitPrice = (float) ($item->pivot->price_override ?? $item->base_price);
+        $prep = (int) $item->preparation_time_minutes;
 
         $orderItem = $order->items()->create([
             'menu_item_id' => $item->id,
@@ -362,7 +383,7 @@ class OrderService
             $value = MenuOptionValue::whereHas('option', fn ($q) => $q->where('menu_item_id', $item->id))
                 ->find($id);
 
-            if (!$value) {
+            if (! $value) {
                 continue;
             }
 
@@ -371,7 +392,7 @@ class OrderService
                 'extra_price' => $value->extra_price,
             ]);
 
-            $optionsTotal += (float)$value->extra_price;
+            $optionsTotal += (float) $value->extra_price;
         }
 
         return [(($unitPrice + $optionsTotal) * $quantity), $prep];
@@ -379,7 +400,7 @@ class OrderService
 
     private function findOrCreateCustomer(?string $phone, ?string $name, ?string $email, bool $online): array
     {
-        if (!$phone) {
+        if (! $phone) {
             return [null, null];
         }
 
@@ -408,30 +429,38 @@ class OrderService
             'id' => $order->id,
             'order_type' => $order->order_type,
             'status' => $order->status,
-            'total_amount' => (float)$order->total_amount,
-            'estimated_preparation_minutes' => (int)$order->estimated_preparation_minutes,
+            'total_amount' => (float) $order->total_amount,
+            'estimated_preparation_minutes' => (int) $order->estimated_preparation_minutes,
             'estimated_ready_at' => $order->estimated_ready_at,
             'created_at' => $order->created_at,
-            'redeemed_points' => (int)$order->redeemed_points,
-            'redeemed_amount' => (float)$order->redeemed_amount,
+            'redeemed_points' => (int) $order->redeemed_points,
+            'redeemed_amount' => (float) $order->redeemed_amount,
+            'coupon_code' => $order->coupon_code,
+            'coupon_discount' => (float) $order->coupon_discount,
+            'free_shipping' => (bool) $order->free_shipping,
             'payable_amount' => $order->payableAmount(),
-            'earned_points' => (int)$order->earned_points,
+            'earned_points' => (int) $order->earned_points,
             'items' => $order->items->map(fn ($item) => $this->serializeOrderItem($item))->values(),
-            'redeemed_points'  => (int) $order->redeemed_points,
-            'redeemed_amount'  => (float) $order->redeemed_amount,
-            'coupon_code'      => $order->coupon_code,
-            'coupon_discount'  => (float) $order->coupon_discount,
-            'free_shipping'    => (bool) $order->free_shipping,
-            'payable_amount'   => $order->payableAmount(),
-            'earned_points'    => (int) $order->earned_points,
         ];
+
+        // منيو أونلاين + ستور: نرجّع نوع الاستلام
+        if (in_array($order->order_type, ['pre_order', 'store'], true)) {
+            $data['fulfillment_type'] = $order->fulfillment_type;
+            $data['fulfillment_label_ar'] = method_exists($order, 'fulfillmentLabelAr')
+                ? $order->fulfillmentLabelAr()
+                : match ($order->fulfillment_type) {
+                    'pickup' => 'أخذ من الفرع',
+                    'dine_in' => 'شرب في الفرع',
+                    'shipping' => 'شحن',
+                    default => null,
+                };
+        }
 
         if ($order->order_type === 'pre_order') {
             $data['received_at'] = $order->received_at;
         }
 
         if ($order->order_type === 'store') {
-            $data['fulfillment_type'] = $order->fulfillment_type;
             $data['shipment'] = $order->shipment ? [
                 'city' => $order->shipment->city,
                 'address_line' => $order->shipment->address_line,
@@ -460,19 +489,19 @@ class OrderService
             'name_ar' => $item->menuItem?->name_ar,
             'name_en' => $item->menuItem?->name_en,
             'image' => $item->menuItem?->image,
-            'quantity' => (int)$item->quantity,
-            'unit_price' => (float)$item->unit_price,
-            'vat' => (float)$item->vat,
-            'preparation_time_minutes' => (int)$item->preparation_time_minutes,
+            'quantity' => (int) $item->quantity,
+            'unit_price' => (float) $item->unit_price,
+            'vat' => (float) $item->vat,
+            'preparation_time_minutes' => (int) $item->preparation_time_minutes,
             'notes' => $item->notes,
             'options' => $item->options->map(fn ($option) => [
                 'id' => $option->id,
                 'menu_option_value_id' => $option->menu_option_value_id,
                 'name_ar' => $option->menuOptionValue?->name_ar,
                 'name_en' => $option->menuOptionValue?->name_en,
-                'extra_price' => (float)$option->extra_price,
+                'extra_price' => (float) $option->extra_price,
             ])->values(),
-            'line_total' => (float)(($item->unit_price + $optionsTotal) * $item->quantity),
+            'line_total' => (float) (($item->unit_price + $optionsTotal) * $item->quantity),
         ];
     }
 
@@ -487,10 +516,10 @@ class OrderService
             'name_ar' => $product?->name_ar,
             'name_en' => $product?->name_en,
             'attributes' => $variant?->attributes,
-            'quantity' => (int)$item->quantity,
-            'unit_price' => (float)$item->unit_price,
+            'quantity' => (int) $item->quantity,
+            'unit_price' => (float) $item->unit_price,
             'notes' => $item->notes,
-            'line_total' => (float)($item->unit_price * $item->quantity),
+            'line_total' => (float) ($item->unit_price * $item->quantity),
         ];
     }
 }

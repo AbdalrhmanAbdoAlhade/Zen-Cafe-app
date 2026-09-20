@@ -37,13 +37,6 @@ class LoyaltyService
     /**
      * التحقق من إمكانية الاستبدال مع إرجاع سبب واضح للفشل.
      *
-     * الشروط:
-     *  1. عدد النقاط موجب
-     *  2. خدمة الاستبدال مفعّلة (قيمة النقطة > 0)
-     *  3. النقاط >= الحد الأدنى للاستبدال
-     *  4. النقاط <= رصيد العميل
-     *  5. قيمة الخصم لا تتجاوز قيمة الطلب
-     *
      * @return string|null  ترجع سبب الفشل، أو null لو كل الشروط سليمة.
      */
     public function validateRedemption(Customer $customer, int $points, float $orderTotal): ?string
@@ -78,22 +71,15 @@ class LoyaltyService
         return null;
     }
 
-    /**
-     * التحقق من إمكانية الاستبدال (boolean) — للتوافق مع الكود القديم.
-     */
     public function canRedeem(Customer $customer, int $points, float $orderTotal): bool
     {
         return $this->validateRedemption($customer, $points, $orderTotal) === null;
     }
 
     /* ============================================================
-     |  استبدال النقاط (عند إنشاء الأوردر)
+     |  استبدال النقاط (عند إنشاء الأوردر) — FIFO
      ============================================================ */
 
-    /**
-     * خصم النقاط من رصيد العميل عند استخدامها في الأوردر.
-     * بتنشئ record في loyalty_points_transactions بنوع 'redeem'.
-     */
     public function redeemPoints(Order $order, ?Customer $customer, int $points): void
     {
         if ($points === 0) {
@@ -122,7 +108,6 @@ class LoyaltyService
             $value    = (float) $settings->point_redemption_value;
             $amount   = round($points * $value, 2);
 
-            // رسالة خطأ دقيقة حسب السبب الفعلي
             $reason = $this->validateRedemption(
                 $lockedCustomer,
                 $points,
@@ -132,6 +117,42 @@ class LoyaltyService
             if ($reason !== null) {
                 throw new InsufficientLoyaltyPointsException($reason);
             }
+
+            // ===== FIFO: خصم من أقدم النقاط الصالحة أولاً =====
+            $needed = $points;
+
+            $earnTxs = LoyaltyPointsTransaction::query()
+                ->where('customer_id', $lockedCustomer->id)
+                ->where('type', LoyaltyPointsTransaction::TYPE_EARN)
+                ->where('remaining_points', '>', 0)
+                ->where(function ($q) {
+                    $q->whereNull('expires_at')
+                      ->orWhere('expires_at', '>', now());
+                })
+                ->orderByRaw('expires_at IS NULL ASC')
+                ->orderBy('expires_at')
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            $available = (int) $earnTxs->sum('remaining_points');
+
+            if ($available < $needed) {
+                throw new InsufficientLoyaltyPointsException(
+                    "رصيدك المتاح الصالح للاستخدام {$available} نقطة فقط (بعض النقاط قد تكون منتهية)."
+                );
+            }
+
+            foreach ($earnTxs as $tx) {
+                if ($needed <= 0) {
+                    break;
+                }
+
+                $take = min($needed, (int) $tx->remaining_points);
+                $tx->decrement('remaining_points', $take);
+                $needed -= $take;
+            }
+            // ==================================================
 
             $lockedCustomer->decrement('loyalty_points_balance', $points);
             $balanceAfter = (int) $lockedCustomer->fresh()->loyalty_points_balance;
@@ -156,18 +177,8 @@ class LoyaltyService
      |  كسب النقاط (عند تأكيد الدفع)
      ============================================================ */
 
-    /**
-     * منح العميل نقاطًا مكتسبة بعد تأكيد دفع الأوردر.
-     *
-     * ملاحظة: النقاط تُحسب على payableAmount() = total_amount - redeemed_amount
-     * لو عايز تحسبها على القيمة الكاملة قبل الخصم، غيّرها إلى:
-     *     $this->calculateEarnedPoints((float) $lockedOrder->total_amount);
-     *
-     * الدالة idempotent — لو اتنادت مرتين على نفس الأوردر مش هتضاعف النقاط.
-     */
     public function earnPoints(Order $order): int
     {
-        // حماية سريعة قبل الدخول على الـ transaction
         if (! $order->customer_id || (int) $order->earned_points > 0) {
             return (int) $order->earned_points;
         }
@@ -178,12 +189,12 @@ class LoyaltyService
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            // حماية مزدوجة داخل الـ transaction
             if ((int) $lockedOrder->earned_points > 0) {
                 return (int) $lockedOrder->earned_points;
             }
 
-            $points = $this->calculateEarnedPoints((float) $lockedOrder->payableAmount());
+            $paidAmount = (float) $lockedOrder->payableAmount();
+            $points     = $this->calculateEarnedPoints($paidAmount);
 
             $customer = Customer::query()
                 ->whereKey($lockedOrder->customer_id)
@@ -195,18 +206,29 @@ class LoyaltyService
                 return 0;
             }
 
+            $settings  = LoyaltySetting::current();
+            $expiresAt = $settings->points_expiry_months > 0
+                ? now()->addMonths((int) $settings->points_expiry_months)
+                : null;
+
             $customer->increment('loyalty_points_balance', $points);
             $balanceAfter = (int) $customer->fresh()->loyalty_points_balance;
+
+            // تحديث إجمالي المبلغ المدفوع + الرتبة (مرة واحدة فقط)
+            $customer->increment('total_spent', $paidAmount);
+            $this->updateCustomerTier($customer->fresh());
 
             $lockedOrder->update(['earned_points' => $points]);
 
             LoyaltyPointsTransaction::create([
-                'customer_id'   => $customer->id,
-                'order_id'      => $lockedOrder->id,
-                'type'          => LoyaltyPointsTransaction::TYPE_EARN,
-                'points'        => $points,
-                'balance_after' => $balanceAfter,
-                'description'   => 'اكتساب نقاط بعد تأكيد الدفع',
+                'customer_id'      => $customer->id,
+                'order_id'         => $lockedOrder->id,
+                'type'             => LoyaltyPointsTransaction::TYPE_EARN,
+                'points'           => $points,
+                'remaining_points' => $points,
+                'balance_after'    => $balanceAfter,
+                'description'      => 'اكتساب نقاط بعد تأكيد الدفع',
+                'expires_at'       => $expiresAt,
             ]);
 
             return $points;
@@ -217,14 +239,6 @@ class LoyaltyService
      |  إرجاع النقاط المستخدمة (عند الرفض أو الإلغاء)
      ============================================================ */
 
-    /**
-     * إرجاع النقاط اللي العميل استخدمها في أوردر اترفض أو اتلغى.
-     *
-     * بتشتغل بس لو:
-     *  - الأوردر حالته rejected أو cancelled
-     *  - الأوردر مستخدم فيه نقاط (redeemed_points > 0)
-     *  - ما اترجعتش قبل كده
-     */
     public function refundRedeemedPoints(Order $order): int
     {
         $points = (int) $order->redeemed_points;
@@ -233,7 +247,6 @@ class LoyaltyService
             return 0;
         }
 
-        // ما نرجّعش النقاط إلا لو الأوردر مرفوض/ملغي فعلاً
         if (! in_array($order->status, [
             Order::STATUS_REJECTED,
             Order::STATUS_CANCELLED,
@@ -242,7 +255,6 @@ class LoyaltyService
         }
 
         return DB::transaction(function () use ($order, $points): int {
-            // حماية من الإرجاع المكرر
             $alreadyRefunded = LoyaltyPointsTransaction::query()
                 ->where('order_id', $order->id)
                 ->where('type', LoyaltyPointsTransaction::TYPE_REFUND)
@@ -281,16 +293,6 @@ class LoyaltyService
      |  سحب النقاط المكتسبة (عند إلغاء أوردر مدفوع)
      ============================================================ */
 
-    /**
-     * سحب النقاط اللي العميل كسبها من أوردر اترفض أو اتلغى *بعد الدفع*.
-     *
-     * السيناريو: عميل دفع → كسب نقاط → الأوردر اتلغى لاحقًا.
-     * في الحالة دي لازم نسحب النقاط المكتسبة.
-     *
-     * ملاحظات:
-     *  - مش بنسحب أكتر من الرصيد المتاح حاليًا (لو العميل صرفها)
-     *  - idempotent — لو اتنادت مرتين مش هتسحب مرتين
-     */
     public function revokeEarnedPoints(Order $order): int
     {
         $points = (int) $order->earned_points;
@@ -300,7 +302,6 @@ class LoyaltyService
         }
 
         return DB::transaction(function () use ($order, $points): int {
-            // حماية من السحب المكرر
             $alreadyRevoked = LoyaltyPointsTransaction::query()
                 ->where('order_id', $order->id)
                 ->where('type', LoyaltyPointsTransaction::TYPE_REVOKE)
@@ -319,11 +320,21 @@ class LoyaltyService
                 return 0;
             }
 
-            // ما نسحبش أكتر من الرصيد المتاح (لو العميل صرف النقاط)
             $pointsToRevoke = min($points, (int) $customer->loyalty_points_balance);
 
             if ($pointsToRevoke === 0) {
                 return 0;
+            }
+
+            $earnTx = LoyaltyPointsTransaction::query()
+                ->where('order_id', $order->id)
+                ->where('type', LoyaltyPointsTransaction::TYPE_EARN)
+                ->lockForUpdate()
+                ->first();
+
+            if ($earnTx && $earnTx->remaining_points > 0) {
+                $fromRemaining = min($pointsToRevoke, (int) $earnTx->remaining_points);
+                $earnTx->decrement('remaining_points', $fromRemaining);
             }
 
             $customer->decrement('loyalty_points_balance', $pointsToRevoke);
@@ -340,5 +351,91 @@ class LoyaltyService
 
             return $pointsToRevoke;
         });
+    }
+
+    /* ============================================================
+     |  انتهاء صلاحية النقاط
+     ============================================================ */
+
+    public function expirePoints(): int
+    {
+        $expiredTxs = LoyaltyPointsTransaction::query()
+            ->where('type', LoyaltyPointsTransaction::TYPE_EARN)
+            ->where('remaining_points', '>', 0)
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '<=', now())
+            ->get();
+
+        $totalExpired = 0;
+
+        foreach ($expiredTxs as $tx) {
+            $expired = DB::transaction(function () use ($tx): int {
+                $lockedTx = LoyaltyPointsTransaction::query()
+                    ->whereKey($tx->id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $lockedTx || $lockedTx->remaining_points <= 0) {
+                    return 0;
+                }
+
+                $points = (int) $lockedTx->remaining_points;
+
+                $customer = Customer::query()
+                    ->whereKey($lockedTx->customer_id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $customer) {
+                    $lockedTx->update(['remaining_points' => 0]);
+                    return 0;
+                }
+
+                $toExpire = min($points, (int) $customer->loyalty_points_balance);
+
+                if ($toExpire <= 0) {
+                    $lockedTx->update(['remaining_points' => 0]);
+                    return 0;
+                }
+
+                $customer->decrement('loyalty_points_balance', $toExpire);
+                $lockedTx->update(['remaining_points' => 0]);
+
+                LoyaltyPointsTransaction::create([
+                    'customer_id'   => $customer->id,
+                    'order_id'      => $lockedTx->order_id,
+                    'type'          => LoyaltyPointsTransaction::TYPE_EXPIRE,
+                    'points'        => $toExpire,
+                    'balance_after' => (int) $customer->fresh()->loyalty_points_balance,
+                    'description'   => 'انتهاء صلاحية نقاط',
+                ]);
+
+                return $toExpire;
+            });
+
+            $totalExpired += $expired;
+        }
+
+        return $totalExpired;
+    }
+
+    /* ============================================================
+     |  تحديث رتبة العميل (Bronze / Silver / Gold)
+     ============================================================ */
+
+    public function updateCustomerTier(Customer $customer): void
+    {
+        $settings = LoyaltySetting::current();
+        $spent    = (float) $customer->total_spent;
+
+        $tier = match (true) {
+            $spent >= (float) $settings->tier_gold_min_spent   => 'gold',
+            $spent >= (float) $settings->tier_silver_min_spent => 'silver',
+            default                                            => 'bronze',
+        };
+
+        if ($customer->tier !== $tier) {
+            $customer->update(['tier' => $tier]);
+        }
     }
 }

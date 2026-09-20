@@ -21,6 +21,9 @@ class Order extends Model
     public const STATUS_PAID = 'paid';
     public const STATUS_CANCELLED = 'cancelled';
     public const STATUS_REFUNDED = 'refunded';
+  public const FULFILLMENT_PICKUP   = 'pickup';
+public const FULFILLMENT_DINE_IN  = 'dine_in';
+public const FULFILLMENT_SHIPPING = 'shipping';
 
     protected $fillable = [
         'branch_id',
@@ -134,7 +137,24 @@ class Order extends Model
             self::STATUS_CANCELLED => [],
         ];
     }
+/** تسميات عربية للفرونت / اللوحات */
+public static function fulfillmentLabels(): array
+{
+    return [
+        self::FULFILLMENT_PICKUP   => 'أخذ من الفرع',
+        self::FULFILLMENT_DINE_IN  => 'شرب في الفرع',
+        self::FULFILLMENT_SHIPPING => 'شحن',
+    ];
+}
 
+public function fulfillmentLabelAr(): ?string
+{
+    if (! $this->fulfillment_type) {
+        return null;
+    }
+
+    return self::fulfillmentLabels()[$this->fulfillment_type] ?? $this->fulfillment_type;
+}
     /**
      * خريطة الانتقالات المسموحة لطلبات المتجر (order_type = store).
      * مفيش خطوة قبول من الكاشير - الدفع الأونلاين هو اللي بيحرك الحالة.

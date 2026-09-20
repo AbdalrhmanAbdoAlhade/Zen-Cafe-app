@@ -11,19 +11,23 @@ class LoyaltyPointsTransaction extends Model
     public const TYPE_REDEEM = 'redeem';
     public const TYPE_REFUND = 'refund';
 
-    protected $fillable = [
-        'customer_id',
-        'order_id',
-        'type',
-        'points',
-        'balance_after',
-        'description',
-    ];
+protected $fillable = [
+    'customer_id',
+    'order_id',
+    'type',
+    'points',
+    'remaining_points',   // ← جديد
+    'balance_after',
+    'description',
+    'expires_at',         // ← جديد
+];
 
-    protected $casts = [
-        'points' => 'integer',
-        'balance_after' => 'integer',
-    ];
+protected $casts = [
+    'points'           => 'integer',
+    'remaining_points' => 'integer',
+    'balance_after'    => 'integer',
+    'expires_at'       => 'datetime',
+];
 
     public function customer(): BelongsTo
     {

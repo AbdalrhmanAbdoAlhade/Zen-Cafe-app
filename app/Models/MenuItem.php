@@ -40,6 +40,10 @@ class MenuItem extends Model
         'ingredients' => 'array',
     ];
 
+    /* ============================================================
+     |  Relations
+     ============================================================ */
+
     public function category(): BelongsTo
     {
         return $this->belongsTo(MenuCategory::class, 'category_id');
@@ -57,8 +61,13 @@ class MenuItem extends Model
             ->withTimestamps();
     }
 
+    /* ============================================================
+     |  Pricing
+     ============================================================ */
+
     /**
-     * السعر الفعلي للصنف في فرع معيّن (price_override لو موجود، وإلا base_price).
+     * السعر الفعلي للصنف في فرع معيّن
+     * (price_override لو موجود، وإلا base_price).
      */
     public function priceForBranch(Branch $branch): float
     {
@@ -66,6 +75,51 @@ class MenuItem extends Model
 
         return (float) ($pivot?->price_override ?? $this->base_price);
     }
+
+    /**
+     * vat مخزّنة كنسبة مئوية (15 = 15%).
+     * السعر النهائي = السعر + الضريبة.
+     *
+     * @param  float|null  $basePrice  مرّر السعر الفعلي (مثلاً بعد price_override)
+     */
+    public function priceWithVat(?float $basePrice = null): array
+    {
+        $price = round((float) ($basePrice ?? $this->base_price), 2);
+        $vatPercent = round((float) ($this->vat ?? 0), 2);
+        $vatAmount = round($price * ($vatPercent / 100), 2);
+        $total = round($price + $vatAmount, 2);
+
+        return [
+            'price' => $price,           // بدون ضريبة
+            'vat' => $vatPercent,        // نسبة %
+            'vat_amount' => $vatAmount,  // مبلغ الضريبة
+            'total_price' => $total,     // شامل الضريبة
+        ];
+    }
+
+    /** سعر شامل الضريبة */
+    public function totalPrice(?float $basePrice = null): float
+    {
+        return $this->priceWithVat($basePrice)['total_price'];
+    }
+
+    /** مبلغ الضريبة فقط */
+    public function vatAmount(?float $basePrice = null): float
+    {
+        return $this->priceWithVat($basePrice)['vat_amount'];
+    }
+
+    /**
+     * تسعير الصنف لفرع معيّن (مع الضريبة).
+     */
+    public function priceWithVatForBranch(Branch $branch): array
+    {
+        return $this->priceWithVat($this->priceForBranch($branch));
+    }
+
+    /* ============================================================
+     |  Scopes
+     ============================================================ */
 
     public function scopeAvailable($query)
     {
