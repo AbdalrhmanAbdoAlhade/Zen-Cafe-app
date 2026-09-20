@@ -19,7 +19,41 @@ class CashierOrderController extends Controller
         private readonly OrderService $orderService,
     ) {
     }
+/**
+ * POST /api/cashier/orders/{order}/settle-and-pay
+ * قفل سريع + دفع من أي حالة (ضغط الشيفت).
+ * Body: { "method": "cash|card", "amount": 50 }
+ */
+public function settleAndPay(RecordPaymentRequest $request, Order $order): JsonResponse
+{
+    if ($deny = $this->denyAdmin($request)) {
+        return $deny;
+    }
 
+    $this->authorizeSameBranch($request, $order);
+
+    $payment = $this->orderPaymentService->settleAndPay(
+        $order,
+        $request->user('staff'),
+        $request->input('method'),
+        (float) $request->input('amount'),
+    );
+
+    $freshOrder = $order->fresh([
+        'items.menuItem',
+        'items.options.menuOptionValue',
+        'table',
+        'customer',
+        'branch',
+    ]);
+
+    return response()->json([
+        'message' => 'تم قفل الطلب وتسجيل الدفع',
+        'payment' => $payment,
+        'order' => $this->formatOrder($freshOrder),
+        'payable_amount' => $freshOrder->payableAmount(),
+    ]);
+}
     /**
      * GET /api/cashier/orders?status=pending,accepted&branch_id=1
      *

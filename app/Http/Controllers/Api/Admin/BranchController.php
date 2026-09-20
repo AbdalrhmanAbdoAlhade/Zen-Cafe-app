@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use Illuminate\Http\Request;
+use App\Models\BranchWorkingHour;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
@@ -166,6 +167,95 @@ class BranchController extends Controller
         ]);
     }
 
+  /**
+ * GET /admin/branches/{branch}/working-hours
+ */
+public function getWorkingHours(Branch $branch)
+{
+    $hours = $branch->workingHours;
+
+    // لو فاضي، نرجع 7 أيام افتراضية عشان الفرونت يعرض فورم كامل
+    if ($hours->isEmpty()) {
+        $hours = collect(range(0, 6))->map(fn ($day) => [
+            'day_of_week' => $day,
+            'day_name'    => BranchWorkingHour::DAYS[$day],
+            'opens_at'    => null,
+            'closes_at'   => null,
+            'is_closed'   => false,
+        ]);
+    } else {
+        $hours = $hours->map(function ($h) {
+            return [
+                'id'          => $h->id,
+                'day_of_week' => $h->day_of_week,
+                'day_name'    => BranchWorkingHour::DAYS[$h->day_of_week] ?? '',
+                'opens_at'    => $h->opens_at ? substr($h->opens_at, 0, 5) : null, // H:i
+                'closes_at'   => $h->closes_at ? substr($h->closes_at, 0, 5) : null,
+                'is_closed'   => $h->is_closed,
+            ];
+        });
+    }
+
+    return response()->json([
+        'data' => $hours,
+        'is_open_now' => $branch->isOpenNow(),
+    ]);
+}
+
+/**
+ * PUT /admin/branches/{branch}/working-hours
+ * Body مثال:
+ * {
+ *   "hours": [
+ *     {"day_of_week": 0, "opens_at": "09:00", "closes_at": "23:00", "is_closed": false},
+ *     {"day_of_week": 5, "is_closed": true},
+ *     ...
+ *   ]
+ * }
+ */
+public function updateWorkingHours(Request $request, Branch $branch)
+{
+    $data = $request->validate([
+        'hours'                 => ['required', 'array', 'size:7'],
+        'hours.*.day_of_week'   => ['required', 'integer', 'between:0,6'],
+        'hours.*.opens_at'      => ['nullable', 'date_format:H:i'],
+        'hours.*.closes_at'     => ['nullable', 'date_format:H:i'],
+        'hours.*.is_closed'     => ['nullable', 'boolean'],
+    ]);
+
+    // تأكد إن كل يوم موجود مرة واحدة
+    $days = collect($data['hours'])->pluck('day_of_week');
+    if ($days->unique()->count() !== 7) {
+        return response()->json([
+            'message' => 'يجب إرسال مواعيد لكل أيام الأسبوع (0 إلى 6) بدون تكرار.',
+        ], 422);
+    }
+
+    DB::transaction(function () use ($branch, $data) {
+        foreach ($data['hours'] as $row) {
+            $isClosed = (bool) ($row['is_closed'] ?? false);
+
+            BranchWorkingHour::updateOrCreate(
+                [
+                    'branch_id'   => $branch->id,
+                    'day_of_week' => $row['day_of_week'],
+                ],
+                [
+                    'opens_at'  => $isClosed ? null : ($row['opens_at'] ?? null),
+                    'closes_at' => $isClosed ? null : ($row['closes_at'] ?? null),
+                    'is_closed' => $isClosed,
+                ]
+            );
+        }
+    });
+
+    return response()->json([
+        'message' => 'تم تحديث مواعيد العمل بنجاح',
+        'data'    => $branch->fresh()->workingHours,
+        'is_open_now' => $branch->fresh()->isOpenNow(),
+    ]);
+}
+  
     public function destroy(Branch $branch)
     {
         if ($branch->tables()->exists() || $branch->staff()->exists() || $branch->orders()->exists()) {
