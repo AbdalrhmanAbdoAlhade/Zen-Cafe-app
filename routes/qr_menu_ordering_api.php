@@ -18,6 +18,8 @@ use App\Http\Controllers\Api\Admin\QrCodeController;
 use App\Http\Controllers\Api\Admin\BranchController;
 use App\Http\Controllers\Api\Admin\StaffController;
 use App\Http\Controllers\Api\Admin\LoyaltySettingController;
+use App\Http\Controllers\Api\Admin\OfferController;
+use App\Http\Controllers\Api\Menu\PublicOfferController;
 use App\Http\Controllers\Api\Admin\AdminUserController;
 use App\Http\Controllers\Api\Store\StoreCheckoutController;
 use App\Http\Controllers\Api\Store\ProductBrowseController;
@@ -73,6 +75,14 @@ Route::post('staff/login', [StaffAuthController::class, 'login']);
 |--------------------------------------------------------------------------
 */
 Route::post('coupons/validate', [CouponValidationController::class, 'validate']);
+
+/*
+|--------------------------------------------------------------------------
+| Public - Offers (العروض الإعلانية: صور + اسم + نص)
+|--------------------------------------------------------------------------
+*/
+Route::get('offers', [PublicOfferController::class, 'index']);
+Route::get('offers/{id}', [PublicOfferController::class, 'show'])->whereNumber('id');
 
 /*
 |--------------------------------------------------------------------------
@@ -192,6 +202,10 @@ Route::middleware('auth:sanctum')
         // إعدادات الولاء
         Route::get('loyalty-settings', [LoyaltySettingController::class, 'show']);
 
+        // العروض
+        Route::get('offers', [OfferController::class, 'index']);
+        Route::get('offers/{offer}', [OfferController::class, 'show']);
+
         /*
         |------------------------------------------------------------------
         | Admin - Write Operations (super_admin + admin فقط)
@@ -213,6 +227,14 @@ Route::middleware('auth:sanctum')
             Route::delete('coupons/{coupon}', [CouponController::class, 'destroy']);
             Route::post('coupons/{coupon}/toggle', [CouponController::class, 'toggle']);
             Route::get('coupons/{coupon}/redemptions', [CouponController::class, 'redemptions']);
+
+            // ===== العروض الإعلانية =====
+            Route::post('offers', [OfferController::class, 'store']);
+            Route::put('offers/{offer}', [OfferController::class, 'update']);
+            Route::patch('offers/{offer}', [OfferController::class, 'update']);
+            Route::delete('offers/{offer}', [OfferController::class, 'destroy']);
+            Route::post('offers/{offer}/images', [OfferController::class, 'addImages']);
+            Route::delete('offers/{offer}/images/{image}', [OfferController::class, 'destroyImage']);
           
             // ===== الفروع =====
             Route::post('branches', [BranchController::class, 'store']);
@@ -289,7 +311,7 @@ Route::middleware('auth:sanctum')
         | Admin - Critical Operations (super_admin فقط)
         |------------------------------------------------------------------
         */
-        Route::middleware('user.role:super_admin')->group(function () {
+        Route::middleware('user.role:super_admin,manager')->group(function () {
 
             // حذف فرع
             Route::delete('branches/{branch}', [BranchController::class, 'destroy']);
@@ -321,7 +343,7 @@ Route::middleware('auth:sanctum')
 | Cashier (role: cashier, manager + admin read-only)
 |--------------------------------------------------------------------------
 */
-Route::middleware(['auth:staff,sanctum', 'staff.role:cashier,manager'])
+Route::middleware(['auth:staff,sanctum', 'staff.role:cashier,manager,cashier'])
     ->prefix('cashier')
     ->group(function () {
         // 📖 read — متاح للأدمن
@@ -332,6 +354,10 @@ Route::middleware(['auth:staff,sanctum', 'staff.role:cashier,manager'])
         Route::post('orders/{order}/accept', [CashierOrderController::class, 'accept']);
         Route::post('orders/{order}/reject', [CashierOrderController::class, 'reject']);
         Route::post('orders/{order}/served', [CashierOrderController::class, 'markServed']);
+        // 🍳 حالات المطبخ — الكاشير يقدر ينفذها كمان
+        Route::post('orders/{order}/start-preparing', [CashierOrderController::class, 'startPreparing']);
+        Route::post('orders/{order}/mark-ready', [CashierOrderController::class, 'markReady']);
+        Route::post('orders/{order}/cancel', [CashierOrderController::class, 'cancel']);
         Route::post('orders/{order}/payment', [CashierOrderController::class, 'payment']);
     });
 
@@ -340,7 +366,7 @@ Route::middleware(['auth:staff,sanctum', 'staff.role:cashier,manager'])
 | Kitchen (role: kitchen, manager + admin read-only)
 |--------------------------------------------------------------------------
 */
-Route::middleware(['auth:staff,sanctum', 'staff.role:kitchen,manager'])
+Route::middleware(['auth:staff,sanctum', 'staff.role:kitchen,cashier,manager'])
     ->prefix('kitchen')
     ->group(function () {
         // 📖 read — متاح للأدمن
