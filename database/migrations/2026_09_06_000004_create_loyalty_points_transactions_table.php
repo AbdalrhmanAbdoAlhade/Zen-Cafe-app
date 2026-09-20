@@ -16,6 +16,9 @@ return new class extends Migration
             $table->unsignedInteger('points');
             $table->unsignedInteger('balance_after');
             $table->text('description')->nullable();
+            $table->timestamp('expires_at')->nullable();
+            $table->unsignedInteger('remaining_points')->nullable(); // للنقاط المتبقية من earn
+            $table->index(['customer_id', 'type', 'expires_at']);
             $table->timestamps();
 
             $table->index(['customer_id', 'type']);

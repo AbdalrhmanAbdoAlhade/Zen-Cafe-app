@@ -15,6 +15,7 @@ return new class extends Migration
             $table->decimal('point_redemption_value', 10, 2)->default(0.50);
             $table->unsignedInteger('minimum_points_to_redeem')->default(20);
             $table->foreignId('updated_by_staff_id')->nullable()->constrained('staff')->nullOnDelete();
+          $table->unsignedInteger('points_expiry_months')->default(12);
             $table->timestamps();
         });
 
