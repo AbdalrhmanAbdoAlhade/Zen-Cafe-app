@@ -8,6 +8,7 @@ use App\Http\Requests\Customer\UpdateCustomerProfileRequest;
 use App\Models\Customer;
 use App\Models\LoyaltySetting;
 use App\Models\Order;
+use App\Services\LoyaltyService;
 use App\Services\OrderService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -16,8 +17,9 @@ use Illuminate\Support\Facades\DB;
 
 class CustomerProfileController extends Controller
 {
-    public function __construct(
+     public function __construct(
         private readonly OrderService $orderService,
+        private readonly LoyaltyService $loyaltyService,
     ) {
     }
 
@@ -206,10 +208,11 @@ class CustomerProfileController extends Controller
         ];
     }
 
-    private function loyaltySummary(Customer $customer): array
+     private function loyaltySummary(Customer $customer): array
     {
         $settings = LoyaltySetting::current();
-        $balance = (int) $customer->loyalty_points_balance;
+        // النقاط الصالحة فعليًا بس (مش المستعملة ولا المنتهية)
+        $balance = $this->loyaltyService->availablePoints($customer);
         $value = (float) $settings->point_redemption_value;
         $minimum = (int) $settings->minimum_points_to_redeem;
 
