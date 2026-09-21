@@ -29,7 +29,24 @@ class LoyaltyService
             ? (int) floor(max(0, $paidAmount) / $rate)
             : 0;
     }
+    /* ============================================================
+     |  النقاط الصالحة فعليًا (مش منتهية ومش مستعملة)
+     ============================================================ */
 
+    public function availablePoints(Customer|int $customer): int
+    {
+        $customerId = $customer instanceof Customer ? $customer->id : $customer;
+
+        return (int) LoyaltyPointsTransaction::query()
+            ->where('customer_id', $customerId)
+            ->whereIn('type', LoyaltyPointsTransaction::SPENDABLE_TYPES)
+            ->where('remaining_points', '>', 0)
+            ->where(function ($q) {
+                $q->whereNull('expires_at')
+                  ->orWhere('expires_at', '>', now());
+            })
+            ->sum('remaining_points');
+    }
     /* ============================================================
      |  التحقق من إمكانية الاستبدال
      ============================================================ */
@@ -39,7 +56,7 @@ class LoyaltyService
      *
      * @return string|null  ترجع سبب الفشل، أو null لو كل الشروط سليمة.
      */
-    public function validateRedemption(Customer $customer, int $points, float $orderTotal): ?string
+       public function validateRedemption(Customer $customer, int $points, float $orderTotal): ?string
     {
         if ($points <= 0) {
             return 'عدد النقاط المطلوب استخدامه غير صالح.';
@@ -48,7 +65,7 @@ class LoyaltyService
         $settings = LoyaltySetting::current();
         $value    = (float) $settings->point_redemption_value;
         $min      = (int) $settings->minimum_points_to_redeem;
-        $balance  = (int) $customer->loyalty_points_balance;
+        $balance  = $this->availablePoints($customer); // الصالح فعليًا مش العداد الخام
 
         if ($value <= 0) {
             return 'خدمة استبدال النقاط غير مفعّلة حاليًا. تواصل مع الدعم.';
@@ -59,7 +76,7 @@ class LoyaltyService
         }
 
         if ($points > $balance) {
-            return "رصيدك الحالي {$balance} نقطة فقط، وطلبت استخدام {$points} نقطة.";
+            return "رصيدك الصالح للاستخدام {$balance} نقطة فقط، وطلبت استخدام {$points} نقطة.";
         }
 
         $discount = round($points * $value, 2);
@@ -70,7 +87,7 @@ class LoyaltyService
 
         return null;
     }
-
+  
     public function canRedeem(Customer $customer, int $points, float $orderTotal): bool
     {
         return $this->validateRedemption($customer, $points, $orderTotal) === null;
@@ -123,7 +140,7 @@ class LoyaltyService
 
             $earnTxs = LoyaltyPointsTransaction::query()
                 ->where('customer_id', $lockedCustomer->id)
-                ->where('type', LoyaltyPointsTransaction::TYPE_EARN)
+               ->whereIn('type', LoyaltyPointsTransaction::SPENDABLE_TYPES)
                 ->where('remaining_points', '>', 0)
                 ->where(function ($q) {
                     $q->whereNull('expires_at')
@@ -239,7 +256,7 @@ class LoyaltyService
      |  إرجاع النقاط المستخدمة (عند الرفض أو الإلغاء)
      ============================================================ */
 
-    public function refundRedeemedPoints(Order $order): int
+      public function refundRedeemedPoints(Order $order): int
     {
         $points = (int) $order->redeemed_points;
 
@@ -277,18 +294,19 @@ class LoyaltyService
             $balanceAfter = (int) $customer->fresh()->loyalty_points_balance;
 
             LoyaltyPointsTransaction::create([
-                'customer_id'   => $customer->id,
-                'order_id'      => $order->id,
-                'type'          => LoyaltyPointsTransaction::TYPE_REFUND,
-                'points'        => $points,
-                'balance_after' => $balanceAfter,
-                'description'   => 'إرجاع النقاط بعد رفض أو إلغاء الطلب',
+                'customer_id'      => $customer->id,
+                'order_id'         => $order->id,
+                'type'             => LoyaltyPointsTransaction::TYPE_REFUND,
+                'points'           => $points,
+                'remaining_points' => $points,   // قابلة للاستخدام تاني
+                'balance_after'    => $balanceAfter,
+                'description'      => 'إرجاع النقاط بعد رفض أو إلغاء الطلب',
+                'expires_at'       => null,      // النقاط المرتجعة مبتنتهيش
             ]);
 
             return $points;
         });
     }
-
     /* ============================================================
      |  سحب النقاط المكتسبة (عند إلغاء أوردر مدفوع)
      ============================================================ */

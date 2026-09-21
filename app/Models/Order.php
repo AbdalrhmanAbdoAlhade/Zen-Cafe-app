@@ -119,7 +119,17 @@ public const FULFILLMENT_SHIPPING = 'shipping';
         2
     ));
 }
+    public function onlinePayments(): HasMany
+    {
+        return $this->hasMany(OnlinePayment::class);
+    }
 
+    public function isPaidOnline(): bool
+    {
+        return $this->relationLoaded('onlinePayments')
+            ? $this->onlinePayments->contains('status', OnlinePayment::STATUS_PAID)
+            : $this->onlinePayments()->where('status', OnlinePayment::STATUS_PAID)->exists();
+    }
     /**
      * خريطة الانتقالات المسموحة بين الحالات لطلبات المنيو (in_branch / pre_order).
      * يستخدمها OrderStatusService.

@@ -58,7 +58,40 @@ class OrderStatusService
 
         return $order->fresh();
     }
+    /**
+     * إلغاء الطلب بواسطة العميل - مسموح بس والأوردر لسه pending.
+     * مش بتعتمد على خريطة allowedTransitions عشان الكاشير يفضل يرفض (rejected) مش يكنسل.
+     * بترجّع نقاط الولاء (أونلاين) أو المخزون (متجر) + الكوبون.
+     */
+    public function cancelByCustomer(Order $order): Order
+    {
+        $currentStatus = $order->status;
 
+        if ($currentStatus !== Order::STATUS_PENDING) {
+            throw new InvalidOrderTransitionException($currentStatus, Order::STATUS_CANCELLED);
+        }
+
+        $order->update(['status' => Order::STATUS_CANCELLED]);
+
+        $fresh = $order->fresh();
+
+        if ($fresh->order_type === 'store') {
+            $this->stockService->refundForOrder($fresh);
+        } else {
+            $this->loyaltyService->refundRedeemedPoints($fresh);
+        }
+
+        $this->couponService->reverseRedemption($fresh);
+
+        $order->statusLogs()->create([
+            'status' => Order::STATUS_CANCELLED,
+            'changed_by_staff_id' => null,
+        ]);
+
+        event(new OrderStatusUpdated($order->fresh(), $currentStatus));
+
+        return $order->fresh();
+    }
     /**
      * الانتقال بحالة أوردر متجر (order_type = store).
      * خريطة انتقالات مختلفة تمامًا - مفيش قبول/رفض من الكاشير.

@@ -14,6 +14,7 @@ use App\Models\Product;
 use App\Models\QrCode;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use App\Models\OnlinePayment;
 
 class OrderService
 {
@@ -423,8 +424,25 @@ class OrderService
         return [$customer, $plainPassword];
     }
 
-    public function serializeOrder(Order $order): array
+       public function serializeOrder(Order $order): array
     {
+        // كويري واحدة (أو صفر لو onlinePayments متحملة eager)
+        $payments = $order->relationLoaded('onlinePayments')
+            ? $order->onlinePayments
+            : $order->onlinePayments()->get();
+
+        $paidOnline    = $payments->contains('status', OnlinePayment::STATUS_PAID);
+        $latestPayment = $payments->sortByDesc('id')->first();
+
+        $canPayOnline = in_array($order->order_type, ['pre_order', 'store'], true)
+            && ! in_array($order->status, [
+                Order::STATUS_CANCELLED,
+                Order::STATUS_REJECTED,
+                Order::STATUS_PAID,
+            ], true)
+            && ! $paidOnline
+            && (float) $order->payableAmount() > 0;
+
         $data = [
             'id' => $order->id,
             'order_type' => $order->order_type,
@@ -440,6 +458,10 @@ class OrderService
             'free_shipping' => (bool) $order->free_shipping,
             'payable_amount' => $order->payableAmount(),
             'earned_points' => (int) $order->earned_points,
+            // 💳 الدفع الأونلاين
+            'paid_online' => $paidOnline,
+            'online_payment_status' => $latestPayment?->status, // initiated | paid | failed | refunded | refund_failed | null
+            'can_pay_online' => $canPayOnline,
             'items' => $order->items->map(fn ($item) => $this->serializeOrderItem($item))->values(),
         ];
 
