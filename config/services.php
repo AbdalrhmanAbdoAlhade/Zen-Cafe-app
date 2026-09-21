@@ -13,7 +13,16 @@ return [
     | a conventional file to locate the various service credentials.
     |
     */
-
+    'mpgs' => [
+        'gateway_url'         => rtrim((string) env('MPGS_GATEWAY_URL'), '/'),
+        'merchant_id'         => env('MPGS_MERCHANT_ID'),
+        'api_password'        => env('MPGS_API_PASSWORD'),
+        'version'             => env('MPGS_API_VERSION', '80'),
+        'webhook_secret'      => env('MPGS_WEBHOOK_SECRET'),
+        'currency'            => env('MPGS_CURRENCY', 'SAR'),
+        'merchant_name'       => env('MPGS_MERCHANT_NAME', 'Zen Cafe'),
+        'frontend_return_url' => env('MPGS_FRONTEND_RETURN_URL'),
+    ],
     'postmark' => [
         'key' => env('POSTMARK_API_KEY'),
     ],

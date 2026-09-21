@@ -32,6 +32,8 @@ use App\Http\Controllers\Api\Chat\CustomerChatController;
 use App\Http\Controllers\Api\Chat\StaffChatController;
 use App\Http\Controllers\Api\Admin\FaqEntryController;
 use App\Http\Controllers\Api\Admin\ChatSettingController;
+use App\Http\Controllers\Api\Customer\CustomerOrderCancelController;
+use App\Http\Controllers\Api\Payments\MpgsPaymentController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -39,6 +41,20 @@ use Illuminate\Support\Facades\Route;
 | PUBLIC ROUTES (بدون تسجيل دخول)
 |==========================================================================
 */
+/*
+|--------------------------------------------------------------------------
+| Public - Online Payment (AlAhli / MPGS)
+|--------------------------------------------------------------------------
+*/
+Route::prefix('payments/mpgs')->group(function () {
+    Route::post('webhook', [MpgsPaymentController::class, 'webhook']);
+    Route::match(['get', 'post'], 'return/{payment}', [MpgsPaymentController::class, 'callback'])
+        ->name('payments.mpgs.return');
+    Route::get('checkout/{payment}', [MpgsPaymentController::class, 'checkoutPage'])
+        ->middleware('signed')
+        ->name('payments.mpgs.checkout');
+});
+
 // عميل (ممكن بدون auth في البداية، أو auth:customer)
 Route::prefix('chat')->group(function () {
     Route::post('conversations', [CustomerChatController::class, 'start']);
@@ -119,6 +135,9 @@ Route::prefix('menu/{token}')->group(function () {
 |==========================================================================
 */
 Route::middleware('auth:customer')->group(function () {
+      // 💳 دفع أونلاين
+    Route::post('customer/profile/orders/{order}/pay', [MpgsPaymentController::class, 'initiate']);
+    Route::get('customer/profile/orders/{order}/payment-status', [MpgsPaymentController::class, 'status']);
     // نقاط الولاء وسجل الحركات
     Route::get('customer/loyalty', [CustomerLoyaltyController::class, 'show']);
 
@@ -129,7 +148,8 @@ Route::middleware('auth:customer')->group(function () {
     // 🆕 طلبات العميل مع الفلترة (status / order_type / shipping_status / branch_id / from / to / sort)
     Route::get('customer/profile/orders', [CustomerProfileController::class, 'orders']);
     Route::get('customer/profile/orders/{order}', [CustomerProfileController::class, 'orderDetails']);
-
+    // 🆕 إلغاء طلب (قبل ما الفرع يقبله)
+    Route::post('customer/profile/orders/{order}/cancel', CustomerOrderCancelController::class);
     // 🆕 إعادة طلب سابق - بدون سلة، بنفس شروط العميل
     Route::post('customer/profile/orders/{order}/reorder', [CustomerProfileController::class, 'reorder']);
 });
@@ -211,7 +231,7 @@ Route::middleware('auth:sanctum')
         | Admin - Write Operations (super_admin + admin فقط)
         |------------------------------------------------------------------
         */
-        Route::middleware('user.role:super_admin,admin,manager')->group(function () {
+        Route::middleware('user.role:super_admin,admin,manager,cashier')->group(function () {
 			Route::get('chat-settings', [ChatSettingController::class, 'show']);
             Route::put('chat-settings', [ChatSettingController::class, 'update']);
 
@@ -311,7 +331,7 @@ Route::middleware('auth:sanctum')
         | Admin - Critical Operations (super_admin فقط)
         |------------------------------------------------------------------
         */
-        Route::middleware('user.role:super_admin,manager')->group(function () {
+        Route::middleware('user.role:super_admin,manager,cashier')->group(function () {
 
             // حذف فرع
             Route::delete('branches/{branch}', [BranchController::class, 'destroy']);
