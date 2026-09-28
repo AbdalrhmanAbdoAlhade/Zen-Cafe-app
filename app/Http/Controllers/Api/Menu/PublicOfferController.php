@@ -15,20 +15,16 @@ class PublicOfferController extends Controller
      * - مع branch_id: عروض الفرع + العروض العامة
      * - من غير branch_id: العروض العامة بس (branch_id = null)
      */
-    public function index(Request $request): JsonResponse
+       public function index(Request $request): JsonResponse
     {
-        $request->validate(['branch_id' => ['nullable', 'integer']]);
-
-        $offers = Offer::active()
-            ->forBranch($request->filled('branch_id') ? $request->integer('branch_id') : null)
-            ->with('images')
+        $offers = Offer::with(['images', 'branch:id,name_ar,name_en'])
+            ->when($request->filled('branch_id'), fn ($q) => $q->where('branch_id', $request->query('branch_id')))
+            ->when($request->filled('is_active'), fn ($q) => $q->where('is_active', $request->boolean('is_active')))
             ->orderBy('sort_order')
             ->orderByDesc('id')
-            ->get();
+            ->paginate(20);
 
-        return response()->json([
-            'data' => $offers->map(fn (Offer $offer) => $this->format($offer))->values(),
-        ]);
+        return response()->json($offers);
     }
 
     /**
