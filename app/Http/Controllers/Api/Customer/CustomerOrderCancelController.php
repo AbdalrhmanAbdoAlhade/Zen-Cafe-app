@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api\Customer;
 use App\Exceptions\InvalidOrderTransitionException;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
-use App\Services\MpgsService;
+use App\Services\HyperpayService;
 use App\Services\OrderService;
 use App\Services\OrderStatusService;
 use Illuminate\Http\JsonResponse;
@@ -20,7 +20,7 @@ class CustomerOrderCancelController extends Controller
     public function __construct(
         private readonly OrderStatusService $statusService,
         private readonly OrderService $orders,
-        private readonly MpgsService $mpgs,
+        private readonly HyperpayService $hyperpay,
     ) {}
 
     public function __invoke(Request $request, Order $order): JsonResponse
@@ -73,9 +73,8 @@ class CustomerOrderCancelController extends Controller
             return $result;
         }
 
-        // لو الطلب كان مدفوع أونلاين نرجّع الفلوس. بره الـ transaction عشان مانقفلش
-        // الـ row أثناء ريكويست خارجي، ولو الاسترجاع فشل بيتسجل refund_failed ومبيوقفش الإلغاء.
-        $this->mpgs->refundIfPaidOnline($result);
+        // ملحوظة: cancelByCustomer() في OrderStatusService بقت بتعمل الاسترجاع بنفسها،
+        // فمفيش داعي لاستدعاء الاسترجاع هنا تاني.
 
         $result->load(
             $result->order_type === 'store'
