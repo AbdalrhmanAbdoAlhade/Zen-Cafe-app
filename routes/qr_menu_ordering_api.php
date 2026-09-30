@@ -33,7 +33,8 @@ use App\Http\Controllers\Api\Chat\StaffChatController;
 use App\Http\Controllers\Api\Admin\FaqEntryController;
 use App\Http\Controllers\Api\Admin\ChatSettingController;
 use App\Http\Controllers\Api\Customer\CustomerOrderCancelController;
-use App\Http\Controllers\Api\Payments\MpgsPaymentController;
+use App\Http\Controllers\Api\Payments\HyperpayPaymentController;
+use App\Http\Controllers\Api\Admin\ZatcaSettingController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -43,16 +44,15 @@ use Illuminate\Support\Facades\Route;
 */
 /*
 |--------------------------------------------------------------------------
-| Public - Online Payment (AlAhli / MPGS)
+| Public - Online Payment (AlAhli / hyperpay)
 |--------------------------------------------------------------------------
 */
-Route::prefix('payments/mpgs')->group(function () {
-    Route::post('webhook', [MpgsPaymentController::class, 'webhook']);
-    Route::match(['get', 'post'], 'return/{payment}', [MpgsPaymentController::class, 'callback'])
-        ->name('payments.mpgs.return');
-    Route::get('checkout/{payment}', [MpgsPaymentController::class, 'checkoutPage'])
+Route::prefix('payments/hyperpay')->group(function () {
+    Route::match(['get', 'post'], 'return/{payment}', [HyperpayPaymentController::class, 'callback'])
+        ->name('payments.hyperpay.return');
+    Route::get('checkout/{payment}', [HyperpayPaymentController::class, 'checkoutPage'])
         ->middleware('signed')
-        ->name('payments.mpgs.checkout');
+        ->name('payments.hyperpay.checkout');
 });
 
 // عميل (ممكن بدون auth في البداية، أو auth:customer)
@@ -135,9 +135,10 @@ Route::prefix('menu/{token}')->group(function () {
 |==========================================================================
 */
 Route::middleware('auth:customer')->group(function () {
-      // 💳 دفع أونلاين
-    Route::post('customer/profile/orders/{order}/pay', [MpgsPaymentController::class, 'initiate']);
-    Route::get('customer/profile/orders/{order}/payment-status', [MpgsPaymentController::class, 'status']);
+    // 💳 دفع أونلاين (HyperPay)
+    Route::post('customer/profile/orders/{order}/pay', [HyperpayPaymentController::class, 'initiate']);
+    Route::get('customer/profile/orders/{order}/payment-status', [HyperpayPaymentController::class, 'status']);
+
     // نقاط الولاء وسجل الحركات
     Route::get('customer/loyalty', [CustomerLoyaltyController::class, 'show']);
 
@@ -235,6 +236,10 @@ Route::middleware('auth:sanctum')
 			Route::get('chat-settings', [ChatSettingController::class, 'show']);
             Route::put('chat-settings', [ChatSettingController::class, 'update']);
 
+           // ===== zatca-settings =====
+          Route::get('zatca-settings', [ZatcaSettingController::class, 'show']);
+          Route::put('zatca-settings', [ZatcaSettingController::class, 'update']);
+          
             Route::apiResource('faq-entries', FaqEntryController::class);
           
             Route::get('branches/{branch}/working-hours', [BranchController::class, 'getWorkingHours']);

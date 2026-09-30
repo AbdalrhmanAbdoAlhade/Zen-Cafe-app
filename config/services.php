@@ -13,15 +13,22 @@ return [
     | a conventional file to locate the various service credentials.
     |
     */
-    'mpgs' => [
-        'gateway_url'         => rtrim((string) env('MPGS_GATEWAY_URL'), '/'),
-        'merchant_id'         => env('MPGS_MERCHANT_ID'),
-        'api_password'        => env('MPGS_API_PASSWORD'),
-        'version'             => env('MPGS_API_VERSION', '80'),
-        'webhook_secret'      => env('MPGS_WEBHOOK_SECRET'),
-        'currency'            => env('MPGS_CURRENCY', 'SAR'),
-        'merchant_name'       => env('MPGS_MERCHANT_NAME', 'Zen Cafe'),
-        'frontend_return_url' => env('MPGS_FRONTEND_RETURN_URL'),
+       'hyperpay' => [
+        'base_url'            => rtrim((string) env('HYPERPAY_BASE_URL', 'https://eu-test.oppwa.com'), '/'),
+        'access_token'        => env('HYPERPAY_ACCESS_TOKEN'),
+        'entity_id'           => env('HYPERPAY_ENTITY_ID'),
+        'currency'            => env('HYPERPAY_CURRENCY', 'SAR'),
+        'test_mode'           => (bool) env('HYPERPAY_TEST_MODE', true),
+        'merchant_url'        => env('HYPERPAY_MERCHANT_URL'),
+        'frontend_return_url' => env('HYPERPAY_FRONTEND_RETURN_URL'),
+        'billing'             => [
+            'email'    => env('HYPERPAY_DEFAULT_EMAIL'),
+            'street'   => env('HYPERPAY_DEFAULT_STREET', 'Riyadh'),
+            'city'     => env('HYPERPAY_DEFAULT_CITY', 'Riyadh'),
+            'state'    => env('HYPERPAY_DEFAULT_STATE', 'Riyadh'),
+            'country'  => env('HYPERPAY_DEFAULT_COUNTRY', 'SA'),
+            'postcode' => env('HYPERPAY_DEFAULT_POSTCODE', '11564'),
+        ],
     ],
     'postmark' => [
         'key' => env('POSTMARK_API_KEY'),
