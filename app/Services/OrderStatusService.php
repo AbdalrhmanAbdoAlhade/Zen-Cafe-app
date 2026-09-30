@@ -9,10 +9,11 @@ use App\Models\Staff;
 
 class OrderStatusService
 {
-   public function __construct(
-    private readonly LoyaltyService $loyaltyService,
-    private readonly StockService $stockService,
-    private readonly CouponService $couponService,
+    public function __construct(
+        private readonly LoyaltyService $loyaltyService,
+        private readonly StockService $stockService,
+        private readonly CouponService $couponService,
+        private readonly HyperpayService $hyperpay,
     ) {
     }
 
@@ -43,11 +44,13 @@ class OrderStatusService
 
         $order->update($updates);
 
-       if (in_array($newStatus, [Order::STATUS_REJECTED, Order::STATUS_CANCELLED], true)) {
-          $fresh = $order->fresh();
-          $this->loyaltyService->refundRedeemedPoints($fresh);
-          $this->couponService->reverseRedemption($fresh);
-      }
+        if (in_array($newStatus, [Order::STATUS_REJECTED, Order::STATUS_CANCELLED], true)) {
+            $fresh = $order->fresh();
+            $this->loyaltyService->refundRedeemedPoints($fresh);
+            $this->couponService->reverseRedemption($fresh);
+            // لو الأوردر كان مدفوع أونلاين، نرجّع الفلوس أوتوماتيك (مش بترمي exception عشان ماتوقفش القفل)
+            $this->hyperpay->refundIfPaidOnline($fresh);
+        }
 
         $order->statusLogs()->create([
             'status' => $newStatus,
@@ -58,10 +61,11 @@ class OrderStatusService
 
         return $order->fresh();
     }
+
     /**
      * إلغاء الطلب بواسطة العميل - مسموح بس والأوردر لسه pending.
      * مش بتعتمد على خريطة allowedTransitions عشان الكاشير يفضل يرفض (rejected) مش يكنسل.
-     * بترجّع نقاط الولاء (أونلاين) أو المخزون (متجر) + الكوبون.
+     * بترجّع نقاط الولاء (أونلاين) أو المخزون (متجر) + الكوبون + الدفع الأونلاين.
      */
     public function cancelByCustomer(Order $order): Order
     {
@@ -82,6 +86,7 @@ class OrderStatusService
         }
 
         $this->couponService->reverseRedemption($fresh);
+        $this->hyperpay->refundIfPaidOnline($fresh);
 
         $order->statusLogs()->create([
             'status' => Order::STATUS_CANCELLED,
@@ -92,10 +97,11 @@ class OrderStatusService
 
         return $order->fresh();
     }
+
     /**
      * الانتقال بحالة أوردر متجر (order_type = store).
      * خريطة انتقالات مختلفة تمامًا - مفيش قبول/رفض من الكاشير.
-     * لو انتقل لـ cancelled أو refunded، المخزون بيرجع تلقائيًا.
+     * لو انتقل لـ cancelled أو refunded، المخزون بيرجع تلقائيًا (+ استرجاع الدفع الأونلاين).
      */
     public function transitionStore(Order $order, string $newStatus, ?Staff $staff = null): Order
     {
@@ -108,11 +114,12 @@ class OrderStatusService
 
         $order->update(['status' => $newStatus]);
 
-       if (in_array($newStatus, [Order::STATUS_CANCELLED, Order::STATUS_REFUNDED], true)) {
-        $fresh = $order->fresh();
-        $this->stockService->refundForOrder($fresh);
-        $this->couponService->reverseRedemption($fresh);
-          }
+        if (in_array($newStatus, [Order::STATUS_CANCELLED, Order::STATUS_REFUNDED], true)) {
+            $fresh = $order->fresh();
+            $this->stockService->refundForOrder($fresh);
+            $this->couponService->reverseRedemption($fresh);
+            $this->hyperpay->refundIfPaidOnline($fresh);
+        }
 
         $order->statusLogs()->create([
             'status' => $newStatus,

@@ -8,13 +8,13 @@ use App\Exceptions\ReorderUnavailableException;
 use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\MenuOptionValue;
+use App\Models\OnlinePayment;
 use App\Models\Order;
 use App\Models\OrderShipment;
 use App\Models\Product;
 use App\Models\QrCode;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use App\Models\OnlinePayment;
 
 class OrderService
 {
@@ -287,19 +287,27 @@ class OrderService
                 'notes' => $payload['notes'] ?? null,
             ]);
 
-            $total = 0;
+            $subtotalExVat = 0.0;
+            $vatAmount = 0.0;
             $maxPrep = 0;
 
             foreach ($payload['items'] as $item) {
-                [$line, $prep] = $this->addOrderItem($order, $branch, $item, $online);
-                $total += $line;
+                [$lineBase, $lineVat, $prep] = $this->addOrderItem($order, $branch, $item, $online);
+                $subtotalExVat += $lineBase;
+                $vatAmount += $lineVat;
                 $maxPrep = max($maxPrep, $prep);
             }
 
+            $subtotalExVat = round($subtotalExVat, 2);
+            $vatAmount = round($vatAmount, 2);
+            $totalIncVat = round($subtotalExVat + $vatAmount, 2);
             $totalPrep = $maxPrep + (int) $branch->current_prep_offset_minutes;
 
             $order->update([
-                'total_amount' => $total,
+                'total_amount' => $totalIncVat,
+                'subtotal_ex_vat' => $subtotalExVat,
+                'vat_amount' => $vatAmount,
+                'total_inc_vat' => $totalIncVat,
                 'estimated_preparation_minutes' => $totalPrep,
                 'estimated_ready_at' => now()->addMinutes($totalPrep),
             ]);
@@ -316,7 +324,7 @@ class OrderService
 
                 $result = $this->couponService->validate(
                     code: $payload['coupon_code'],
-                    subtotal: $total,
+                    subtotal: $totalIncVat,
                     items: $itemsForCoupon,
                     branchId: $branch->id,
                     customer: $customer,
@@ -378,8 +386,6 @@ class OrderService
             'notes' => $cartItem['notes'] ?? null,
         ]);
 
-        $optionsTotal = 0;
-
         foreach ($cartItem['option_value_ids'] ?? [] as $id) {
             $value = MenuOptionValue::whereHas('option', fn ($q) => $q->where('menu_item_id', $item->id))
                 ->find($id);
@@ -392,11 +398,13 @@ class OrderService
                 'menu_option_value_id' => $value->id,
                 'extra_price' => $value->extra_price,
             ]);
-
-            $optionsTotal += (float) $value->extra_price;
         }
 
-        return [(($unitPrice + $optionsTotal) * $quantity), $prep];
+        $orderItem->load('options');
+        $lineBase = $orderItem->lineBaseAmount();
+        $lineVat = $orderItem->lineVatAmount();
+
+        return [$lineBase, $lineVat, $prep];
     }
 
     private function findOrCreateCustomer(?string $phone, ?string $name, ?string $email, bool $online): array
@@ -424,14 +432,13 @@ class OrderService
         return [$customer, $plainPassword];
     }
 
-       public function serializeOrder(Order $order): array
+    public function serializeOrder(Order $order): array
     {
-        // كويري واحدة (أو صفر لو onlinePayments متحملة eager)
         $payments = $order->relationLoaded('onlinePayments')
             ? $order->onlinePayments
             : $order->onlinePayments()->get();
 
-        $paidOnline    = $payments->contains('status', OnlinePayment::STATUS_PAID);
+        $paidOnline = $payments->contains('status', OnlinePayment::STATUS_PAID);
         $latestPayment = $payments->sortByDesc('id')->first();
 
         $canPayOnline = in_array($order->order_type, ['pre_order', 'store'], true)
@@ -448,6 +455,9 @@ class OrderService
             'order_type' => $order->order_type,
             'status' => $order->status,
             'total_amount' => (float) $order->total_amount,
+            'subtotal_ex_vat' => $order->subtotal_ex_vat !== null ? (float) $order->subtotal_ex_vat : null,
+            'vat_amount' => $order->vat_amount !== null ? (float) $order->vat_amount : null,
+            'total_inc_vat' => $order->total_inc_vat !== null ? (float) $order->total_inc_vat : null,
             'estimated_preparation_minutes' => (int) $order->estimated_preparation_minutes,
             'estimated_ready_at' => $order->estimated_ready_at,
             'created_at' => $order->created_at,
@@ -458,14 +468,13 @@ class OrderService
             'free_shipping' => (bool) $order->free_shipping,
             'payable_amount' => $order->payableAmount(),
             'earned_points' => (int) $order->earned_points,
-            // 💳 الدفع الأونلاين
             'paid_online' => $paidOnline,
-            'online_payment_status' => $latestPayment?->status, // initiated | paid | failed | refunded | refund_failed | null
+            'online_payment_status' => $latestPayment?->status,
             'can_pay_online' => $canPayOnline,
             'items' => $order->items->map(fn ($item) => $this->serializeOrderItem($item))->values(),
+            'invoice' => $this->serializeInvoice($order),
         ];
 
-        // منيو أونلاين + ستور: نرجّع نوع الاستلام
         if (in_array($order->order_type, ['pre_order', 'store'], true)) {
             $data['fulfillment_type'] = $order->fulfillment_type;
             $data['fulfillment_label_ar'] = method_exists($order, 'fulfillmentLabelAr')
@@ -503,7 +512,7 @@ class OrderService
             return $this->serializeStoreOrderItem($item);
         }
 
-        $optionsTotal = $item->options->sum('extra_price');
+        $breakdown = $item->pricingBreakdown();
 
         return [
             'id' => $item->id,
@@ -523,7 +532,9 @@ class OrderService
                 'name_en' => $option->menuOptionValue?->name_en,
                 'extra_price' => (float) $option->extra_price,
             ])->values(),
-            'line_total' => (float) (($item->unit_price + $optionsTotal) * $item->quantity),
+            'line_base' => $breakdown['line_base'],
+            'vat_amount' => $breakdown['vat_amount'],
+            'line_total' => $breakdown['line_total'],
         ];
     }
 
@@ -542,6 +553,24 @@ class OrderService
             'unit_price' => (float) $item->unit_price,
             'notes' => $item->notes,
             'line_total' => (float) ($item->unit_price * $item->quantity),
+        ];
+    }
+
+    private function serializeInvoice(Order $order): ?array
+    {
+        if (! $order->zatca_qr_base64 && ! $order->invoice_number) {
+            return null;
+        }
+
+        return [
+            'number' => $order->invoice_number,
+            'uuid' => $order->invoice_uuid,
+            'issued_at' => $order->invoice_issued_at,
+            'subtotal_ex_vat' => $order->subtotal_ex_vat !== null ? (float) $order->subtotal_ex_vat : null,
+            'vat_amount' => $order->vat_amount !== null ? (float) $order->vat_amount : null,
+            'total_inc_vat' => $order->total_inc_vat !== null ? (float) $order->total_inc_vat : null,
+            'qr_base64' => $order->zatca_qr_base64,
+            'status' => $order->zatca_status,
         ];
     }
 }

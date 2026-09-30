@@ -7,21 +7,25 @@ use App\Exceptions\PaymentAmountMismatchException;
 use App\Models\Order;
 use App\Models\OrderPayment;
 use App\Models\Staff;
+use App\Services\Zatca\ZatcaQrService;
 use Illuminate\Support\Facades\DB;
 
 class OrderPaymentService
 {
-    public function __construct(
-        private readonly OrderStatusService $orderStatusService,
-        private readonly LoyaltyService $loyaltyService,
-    ) {
-    }
+public function __construct(
+    private readonly OrderStatusService $orderStatusService,
+    private readonly LoyaltyService $loyaltyService,
+    private readonly ZatcaQrService $zatcaQrService,
+) {
+}
 
     /**
      * المسار العادي: بعد served فقط (عبر خريطة الانتقالات).
      */
     public function recordPayment(Order $order, Staff $staff, string $method, float $amount): OrderPayment
     {
+        $this->assertNotPaidOnline($order);
+
         return $this->finalizePayment($order, $staff, $method, $amount, forceStatus: false);
     }
 
@@ -32,6 +36,8 @@ class OrderPaymentService
      */
     public function settleAndPay(Order $order, Staff $staff, string $method, float $amount): OrderPayment
     {
+        $this->assertNotPaidOnline($order);
+
         $blocked = [
             Order::STATUS_PAID,
             Order::STATUS_REJECTED,
@@ -49,17 +55,80 @@ class OrderPaymentService
             );
         }
 
-      // طلب المتجر: مسموح بس لو خريطة المتجر بتسمح بالانتقال لـ paid من حالته الحالية (pending)
-if (
-    $order->order_type === 'store'
-    && ! in_array(Order::STATUS_PAID, Order::allowedStoreTransitions()[$order->status] ?? [], true)
-) {
-    throw new \InvalidArgumentException(
-        "لا يمكن قفل طلب المتجر وهو في حالة: {$order->status}"
-    );
-}
+        // طلب المتجر: مسموح بس لو خريطة المتجر بتسمح بالانتقال لـ paid من حالته الحالية (pending)
+        if (
+            $order->order_type === 'store'
+            && ! in_array(Order::STATUS_PAID, Order::allowedStoreTransitions()[$order->status] ?? [], true)
+        ) {
+            throw new \InvalidArgumentException(
+                "لا يمكن قفل طلب المتجر وهو في حالة: {$order->status}"
+            );
+        }
 
         return $this->finalizePayment($order, $staff, $method, $amount, forceStatus: true);
+    }
+
+    /**
+     * 💳 قفل أوردر اتدفع أونلاين بالفعل (HyperPay). مفيش تحصيل نقدي هنا،
+     * الفلوس اتحصّلت من البوابة، إحنا بس بننقل حالة الأوردر لـ paid
+     * ونحسب نقاط الولاء. بديل settleAndPay للأوردرات المدفوعة أونلاين.
+     */
+    public function closePaidOnlineOrder(Order $order, ?Staff $staff = null): Order
+    {
+        if (! $order->isPaidOnline()) {
+            throw new \InvalidArgumentException('الطلب مش مدفوع أونلاين، استخدم settleAndPay/recordPayment.');
+        }
+
+        if ($order->status === Order::STATUS_PAID) {
+            return $order;
+        }
+
+        $blocked = [
+            Order::STATUS_REJECTED,
+            Order::STATUS_CANCELLED,
+        ];
+
+        if (defined(Order::class.'::STATUS_REFUNDED')) {
+            $blocked[] = Order::STATUS_REFUNDED;
+        }
+
+        if (in_array($order->status, $blocked, true)) {
+            throw new \InvalidArgumentException(
+                "لا يمكن قفل الطلب وهو في حالة: {$order->status}"
+            );
+        }
+
+        return DB::transaction(function () use ($order, $staff) {
+            $from = $order->status;
+
+            $updates = ['status' => Order::STATUS_PAID];
+
+            if ($order->order_type === 'pre_order' && ! $order->received_at) {
+                $updates['received_at'] = now();
+            }
+
+            $order->update($updates);
+
+            $order->statusLogs()->create([
+                'status' => Order::STATUS_PAID,
+                'changed_by_staff_id' => $staff?->id,
+            ]);
+
+            event(new OrderStatusUpdated($order->fresh(), $from));
+
+            $this->loyaltyService->earnPoints($order->fresh());
+
+            return $order->fresh();
+        });
+    }
+
+    private function assertNotPaidOnline(Order $order): void
+    {
+        if ($order->isPaidOnline()) {
+            throw new \InvalidArgumentException(
+                'الطلب مدفوع أونلاين بالفعل. استخدم closePaidOnlineOrder بدل تسجيل دفعة يدوية.'
+            );
+        }
     }
 
     private function finalizePayment(
@@ -109,9 +178,11 @@ if (
                 $this->orderStatusService->transition($order, Order::STATUS_PAID, $staff);
             }
 
-            $this->loyaltyService->earnPoints($order->fresh());
+                     $fresh = $order->fresh();
+          $this->loyaltyService->earnPoints($fresh);
+          $this->zatcaQrService->generateForOrder($fresh);
 
-            return $payment;
+          return $payment;
         });
     }
 }

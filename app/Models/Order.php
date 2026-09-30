@@ -47,6 +47,14 @@ public const FULFILLMENT_SHIPPING = 'shipping';
         'coupon_code',
         'coupon_discount',
         'free_shipping',
+        'invoice_number',
+        'invoice_uuid',
+        'invoice_issued_at',
+        'subtotal_ex_vat',
+        'vat_amount',
+        'total_inc_vat',
+        'zatca_qr_base64',
+        'zatca_status',
     ];
 
     protected $casts = [
@@ -59,6 +67,10 @@ public const FULFILLMENT_SHIPPING = 'shipping';
         'received_at' => 'datetime',
         'coupon_discount' => 'decimal:2',
         'free_shipping'   => 'boolean',
+        'invoice_issued_at' => 'datetime',
+        'subtotal_ex_vat' => 'decimal:2',
+        'vat_amount' => 'decimal:2',
+        'total_inc_vat' => 'decimal:2',
     ];
 
   public function coupon(): BelongsTo
