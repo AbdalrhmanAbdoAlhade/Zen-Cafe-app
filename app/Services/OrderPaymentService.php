@@ -176,13 +176,15 @@ public function __construct(
             } else {
                 // served → paid فقط حسب الخريطة
                 $this->orderStatusService->transition($order, Order::STATUS_PAID, $staff);
-            }
+                    }
+        $fresh = $order->fresh();
 
-                     $fresh = $order->fresh();
-          $this->loyaltyService->earnPoints($fresh);
-          $this->zatcaQrService->generateForOrder($fresh);
+        $this->loyaltyService->earnPoints($fresh);
 
-          return $payment;
+        // ZATCA اختيارية ولا تؤثر على نجاح الدفع
+        $this->zatcaQrService->generateForOrder($fresh);
+
+        return $payment;
         });
     }
 }
