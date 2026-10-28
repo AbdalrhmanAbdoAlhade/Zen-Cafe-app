@@ -13,6 +13,20 @@ return [
     | a conventional file to locate the various service credentials.
     |
     */
+      'whatsapp' => [
+          'enabled'  => env('WHATSAPP_ENABLED', false),
+          'provider' => env('WHATSAPP_PROVIDER', 'meta'), // meta | twilio | custom
+          'api_url'  => env('WHATSAPP_API_URL', 'https://graph.facebook.com/v19.0'),
+          'token'    => env('WHATSAPP_TOKEN'),
+          'phone_id' => env('WHATSAPP_PHONE_NUMBER_ID'),
+          'from'     => env('WHATSAPP_FROM'),
+          'account_sid' => env('WHATSAPP_ACCOUNT_SID'),
+      ],
+
+      'notifications' => [
+          'payment_success_queue' => env('PAYMENT_NOTIFY_QUEUE', 'notifications'),
+      ],
+
        'hyperpay' => [
         'base_url'            => rtrim((string) env('HYPERPAY_BASE_URL', 'https://eu-test.oppwa.com'), '/'),
         'access_token'        => env('HYPERPAY_ACCESS_TOKEN'),

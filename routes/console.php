@@ -10,3 +10,4 @@ Artisan::command('inspire', function () {
 
 // جدولة الأمر المستقل خارج دالة inspire
 Schedule::command('loyalty:expire-points')->daily();
+Schedule::command('carts:mark-abandoned')->everyFiveMinutes()->withoutOverlapping();

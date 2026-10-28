@@ -35,6 +35,14 @@ use App\Http\Controllers\Api\Admin\ChatSettingController;
 use App\Http\Controllers\Api\Customer\CustomerOrderCancelController;
 use App\Http\Controllers\Api\Payments\HyperpayPaymentController;
 use App\Http\Controllers\Api\Admin\ZatcaSettingController;
+use App\Http\Controllers\Api\Admin\ReportController;
+use App\Http\Controllers\Api\Cart\CartController;
+use App\Http\Controllers\Api\Admin\PaymentNotificationController;
+use App\Http\Controllers\Api\Admin\CustomMessageController;
+use App\Http\Controllers\Api\DocumentController as PublicDocumentController;
+use App\Http\Controllers\Api\Admin\DocumentController as AdminDocumentController;
+use App\Http\Controllers\Api\Admin\SalesReportController;
+
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -42,6 +50,27 @@ use Illuminate\Support\Facades\Route;
 | PUBLIC ROUTES (بدون تسجيل دخول)
 |==========================================================================
 */
+
+// ========== Public ==========
+Route::get('documents', [PublicDocumentController::class, 'index']);
+Route::get('documents/{document}', [PublicDocumentController::class, 'show']);
+
+// ========== Admin ==========
+Route::middleware(['auth:sanctum'])->prefix('admin')->group(function () {
+  Route::get('documents', [AdminDocumentController::class, 'index']);
+    Route::get('documents/{document}', [AdminDocumentController::class, 'show']);
+
+    // إضافة
+    Route::post('documents', [AdminDocumentController::class, 'store']);
+
+    // تعديل (POST أفضل مع الملفات)
+    Route::post('documents/{document}', [AdminDocumentController::class, 'update']);
+
+    // حذف
+    Route::delete('documents/{document}', [AdminDocumentController::class, 'destroy']);
+});
+Route::get('admin/faq-entries', [FaqEntryController::class, 'index']);
+Route::get('admin/faq-entries/{faq_entry}', [FaqEntryController::class, 'show']);
 /*
 |--------------------------------------------------------------------------
 | Public - Online Payment (AlAhli / hyperpay)
@@ -55,18 +84,28 @@ Route::prefix('payments/hyperpay')->group(function () {
         ->name('payments.hyperpay.checkout');
 });
 
-// عميل (ممكن بدون auth في البداية، أو auth:customer)
-Route::prefix('chat')->group(function () {
-    Route::post('conversations', [CustomerChatController::class, 'start']);
-    Route::post('conversations/{conversation}/messages', [CustomerChatController::class, 'sendMessage']);
-    Route::get('conversations/{conversation}/messages', [CustomerChatController::class, 'messages']);
-    Route::post('conversations/{conversation}/handoff', [CustomerChatController::class, 'handoff']);
-});
+
+
+
 /*
 |--------------------------------------------------------------------------
 | Public - Store (متجر مستلزمات القهوة)
 |--------------------------------------------------------------------------
 */
+  
+Route::prefix('cart')->group(function () {
+    Route::post('/', [CartController::class, 'store']);
+    Route::get('{cart}', [CartController::class, 'show']);
+    Route::post('{cart}/items', [CartController::class, 'addItem']);
+    Route::patch('{cart}/items/{item}', [CartController::class, 'updateItem']);
+    Route::delete('{cart}/items/{item}', [CartController::class, 'removeItem']);
+    Route::delete('{cart}/items', [CartController::class, 'clear']);
+    Route::post('{cart}/checkout-started', [CartController::class, 'checkoutStarted']);
+    Route::post('{cart}/payment-failed', [CartController::class, 'paymentFailed']);
+    Route::post('{cart}/recover', [CartController::class, 'recover']);
+    Route::post('{cart}/convert', [CartController::class, 'convert']);
+});
+
 Route::prefix('store')->group(function () {
     Route::get('categories', [ProductBrowseController::class, 'categories']);
     Route::get('products', [ProductBrowseController::class, 'index']);
@@ -135,10 +174,21 @@ Route::prefix('menu/{token}')->group(function () {
 |==========================================================================
 */
 Route::middleware('auth:customer')->group(function () {
+/*
+|--------------------------------------------------------------------------
+| Public - Customer Chat
+|--------------------------------------------------------------------------
+*/
+Route::prefix('chat')->group(function () {
+    Route::post('conversations', [CustomerChatController::class, 'start']);
+    Route::post('conversations/{conversation}/messages', [CustomerChatController::class, 'sendMessage']);
+    Route::get('conversations/{conversation}/messages', [CustomerChatController::class, 'messages']);
+    Route::post('conversations/{conversation}/handoff', [CustomerChatController::class, 'handoff']);
+});
     // 💳 دفع أونلاين (HyperPay)
     Route::post('customer/profile/orders/{order}/pay', [HyperpayPaymentController::class, 'initiate']);
     Route::get('customer/profile/orders/{order}/payment-status', [HyperpayPaymentController::class, 'status']);
-
+	
     // نقاط الولاء وسجل الحركات
     Route::get('customer/loyalty', [CustomerLoyaltyController::class, 'show']);
 
@@ -155,13 +205,7 @@ Route::middleware('auth:customer')->group(function () {
     Route::post('customer/profile/orders/{order}/reorder', [CustomerProfileController::class, 'reorder']);
 });
 
-// موظف
-Route::prefix('staff/chat')->middleware(['auth:staff'])->group(function () {
-    Route::get('conversations', [StaffChatController::class, 'index']);
-    Route::post('conversations/{conversation}/accept', [StaffChatController::class, 'accept']);
-    Route::post('conversations/{conversation}/messages', [StaffChatController::class, 'sendMessage']);
-    Route::post('conversations/{conversation}/close', [StaffChatController::class, 'close']);
-});
+
 /*
 |==========================================================================
 | ADMIN ROUTES (auth:sanctum → users)
@@ -233,14 +277,36 @@ Route::middleware('auth:sanctum')
         |------------------------------------------------------------------
         */
         Route::middleware('user.role:super_admin,admin,manager,cashier')->group(function () {
+          	
+            Route::get('report/sales', [SalesReportController::class, 'index']);
+            Route::get('report/sales/{order}', [SalesReportController::class, 'show']);
+            // ===== رسائل مخصصة =====
+            Route::post('messages/send', [CustomMessageController::class, 'send']);
+            Route::get('messages', [CustomMessageController::class, 'index']);
+            Route::get('messages/{message}', [CustomMessageController::class, 'show']);
+            Route::post('messages/{message}/retry', [CustomMessageController::class, 'retry']);
+            // ===== إشعارات الدفع =====
+            Route::get('payments/{payment}/notifications', [PaymentNotificationController::class, 'index']);
+            Route::post('payments/{payment}/notifications/resend', [PaymentNotificationController::class, 'resend']);
+            Route::post('orders/{order}/notifications/resend', [PaymentNotificationController::class, 'resendByOrder']);
+          // ===== الشات (محادثات) =====
+            Route::get('chat/conversations', [StaffChatController::class, 'index']);
+            Route::get('chat/conversations/{conversation}', [StaffChatController::class, 'show']);
+            Route::post('chat/conversations/{conversation}/accept', [StaffChatController::class, 'accept']);
+            Route::post('chat/conversations/{conversation}/messages', [StaffChatController::class, 'sendMessage']);
+            Route::post('chat/conversations/{conversation}/close', [StaffChatController::class, 'close']);
+          
 			Route::get('chat-settings', [ChatSettingController::class, 'show']);
             Route::put('chat-settings', [ChatSettingController::class, 'update']);
 
-           // ===== zatca-settings =====
-          Route::get('zatca-settings', [ZatcaSettingController::class, 'show']);
-          Route::put('zatca-settings', [ZatcaSettingController::class, 'update']);
+             // ===== zatca-settings =====
+            Route::get('zatca-settings', [ZatcaSettingController::class, 'show']);
+            Route::put('zatca-settings', [ZatcaSettingController::class, 'update']);
           
-            Route::apiResource('faq-entries', FaqEntryController::class);
+            Route::post('faq-entries', [FaqEntryController::class, 'store']);
+            Route::put('faq-entries/{faq_entry}', [FaqEntryController::class, 'update']);
+            Route::patch('faq-entries/{faq_entry}', [FaqEntryController::class, 'update']);
+            Route::delete('faq-entries/{faq_entry}', [FaqEntryController::class, 'destroy']);
           
             Route::get('branches/{branch}/working-hours', [BranchController::class, 'getWorkingHours']);
             Route::put('branches/{branch}/working-hours', [BranchController::class, 'updateWorkingHours']);
@@ -285,7 +351,19 @@ Route::middleware('auth:sanctum')
             Route::post('store-orders/{order}/mark-shipped', [StoreOrderManagementController::class, 'markShipped']);
             Route::post('store-orders/{order}/mark-delivered', [StoreOrderManagementController::class, 'markDelivered']);
             Route::post('store-orders/{order}/cancel', [StoreOrderManagementController::class, 'cancel']);
-
+          
+             // ===== التقارير  =====
+          	Route::get('reports/abandoned-carts', [ReportController::class, 'abandonedCartsReport']);
+            Route::get('reports/user-activity', [ReportController::class, 'userActivityReport']);
+          	Route::get('reports/inventory', [ReportController::class, 'inventoryReport']);
+          	Route::get('reports/traffic-conversion', [ReportController::class, 'trafficAndConversion']);
+            Route::get('reports/loyalty-points', [ReportController::class, 'loyaltyPointsReport']);
+          	Route::get('reports/customer-segments', [ReportController::class, 'customerSegmentsAndChurn']);
+            Route::get('reports/customers-new-vs-returning', [ReportController::class, 'customersNewVsReturning']);
+            Route::get('reports/discounts-and-tax', [ReportController::class, 'discountsAndTax']);
+            Route::get('reports/payment-operations', [ReportController::class, 'paymentOperations']);
+            Route::get('reports/fulfillment-times', [ReportController::class, 'fulfillmentTimes']);
+            Route::get('reports/purchase-frequency-retention', [ReportController::class, 'purchaseFrequencyAndRetention']);
             // ===== إعدادات الولاء =====
             Route::put('loyalty-settings', [LoyaltySettingController::class, 'update']);
 
@@ -336,7 +414,7 @@ Route::middleware('auth:sanctum')
         | Admin - Critical Operations (super_admin فقط)
         |------------------------------------------------------------------
         */
-        Route::middleware('user.role:super_admin,manager,cashier')->group(function () {
+        Route::middleware('user.role:super_admin,manager,admin,cashier')->group(function () {
 
             // حذف فرع
             Route::delete('branches/{branch}', [BranchController::class, 'destroy']);
@@ -384,6 +462,12 @@ Route::middleware(['auth:staff,sanctum', 'staff.role:cashier,manager,cashier'])
         Route::post('orders/{order}/mark-ready', [CashierOrderController::class, 'markReady']);
         Route::post('orders/{order}/cancel', [CashierOrderController::class, 'cancel']);
         Route::post('orders/{order}/payment', [CashierOrderController::class, 'payment']);
+      	
+      	// ===== أوردرات المتجر =====
+        Route::post('orders/{order}/paid', [CashierOrderController::class, 'markStorePaid']);
+        Route::post('orders/{order}/shipped', [CashierOrderController::class, 'markShipped']);
+        Route::post('orders/{order}/delivered', [CashierOrderController::class, 'markDelivered']);
+        Route::post('orders/{order}/store-cancel', [CashierOrderController::class, 'cancelStoreOrder']);
     });
 
 /*
@@ -396,7 +480,11 @@ Route::middleware(['auth:staff,sanctum', 'staff.role:kitchen,cashier,manager'])
     ->group(function () {
         // 📖 read — متاح للأدمن
         Route::get('orders', [KitchenOrderController::class, 'index']);
-
+		// ===== أوردرات المتجر =====
+        Route::post('orders/{order}/paid', [CashierOrderController::class, 'markStorePaid']);
+        Route::post('orders/{order}/shipped', [CashierOrderController::class, 'markShipped']);
+        Route::post('orders/{order}/delivered', [CashierOrderController::class, 'markDelivered']);
+        Route::post('orders/{order}/store-cancel', [CashierOrderController::class, 'cancelStoreOrder']);
         // ✍️ write — للموظفين بس (الأدمن بيترفض من الكنترولر)
         Route::post('orders/{order}/start-preparing', [KitchenOrderController::class, 'startPreparing']);
         Route::post('orders/{order}/mark-ready', [KitchenOrderController::class, 'markReady']);
