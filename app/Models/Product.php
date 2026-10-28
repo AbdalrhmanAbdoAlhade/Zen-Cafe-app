@@ -27,6 +27,8 @@ class Product extends Model
         'country_of_origin',
         'roast_date',
         'brewing_method',
+      'stock_quantity',
+    'low_stock_threshold',
     ];
 
     protected $casts = [
@@ -35,7 +37,25 @@ class Product extends Model
         'is_available' => 'boolean',
         'is_featured' => 'boolean',
         'roast_date' => 'date',
+      'stock_quantity' => 'integer',
+    'low_stock_threshold' => 'integer',
     ];
+  
+  	// أضف الدالتين دول:
+      public function isLowStock(): bool
+      {
+          // لو عنده variants نستخدم الـ variants، لو مفيش نستخدم الـ stock بتاعه هو
+          if ($this->variants()->exists()) {
+              return $this->variants()->whereColumn('stock_quantity', '<=', 'low_stock_threshold')->exists();
+          }
+
+          return $this->stock_quantity <= $this->low_stock_threshold;
+      }
+
+      public function hasVariants(): bool
+      {
+          return $this->variants()->exists();
+      }
 
     public function category(): BelongsTo
     {

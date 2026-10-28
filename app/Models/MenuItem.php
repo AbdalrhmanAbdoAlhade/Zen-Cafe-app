@@ -30,14 +30,14 @@ class MenuItem extends Model
     ];
 
     protected $casts = [
-        'base_price' => 'decimal:2',
-        'is_available' => 'boolean',
-        'is_available_online' => 'boolean',
+        'base_price'               => 'decimal:2',
+        'is_available'             => 'boolean',
+        'is_available_online'      => 'boolean',
         'preparation_time_minutes' => 'integer',
-        'vat' => 'decimal:2',
-        'calories' => 'integer',
-        'allergens' => 'array',
-        'ingredients' => 'array',
+        'vat'                      => 'decimal:2',
+        'calories'                 => 'integer',
+        'allergens'                => 'array',
+        'ingredients'              => 'array',
     ];
 
     /* ============================================================
@@ -57,8 +57,13 @@ class MenuItem extends Model
     public function branches(): BelongsToMany
     {
         return $this->belongsToMany(Branch::class, 'menu_item_branch')
-            ->withPivot(['price_override', 'is_available', 'is_featured'])
+            ->withPivot(['price_override', 'is_available', 'is_featured', 'stock'])
             ->withTimestamps();
+    }
+
+    public function orderItems(): HasMany
+    {
+        return $this->hasMany(OrderItem::class);
     }
 
     /* ============================================================
@@ -90,10 +95,10 @@ class MenuItem extends Model
         $total = round($price + $vatAmount, 2);
 
         return [
-            'price' => $price,           // بدون ضريبة
-            'vat' => $vatPercent,        // نسبة %
-            'vat_amount' => $vatAmount,  // مبلغ الضريبة
-            'total_price' => $total,     // شامل الضريبة
+            'price'       => $price,        // بدون ضريبة
+            'vat'         => $vatPercent,   // نسبة %
+            'vat_amount'  => $vatAmount,    // مبلغ الضريبة
+            'total_price' => $total,        // شامل الضريبة
         ];
     }
 
@@ -115,6 +120,30 @@ class MenuItem extends Model
     public function priceWithVatForBranch(Branch $branch): array
     {
         return $this->priceWithVat($this->priceForBranch($branch));
+    }
+
+    /* ============================================================
+     |  Stock Helpers
+     ============================================================ */
+
+    /**
+     * هل الصنف متوفر في المخزون في فرع معيّن؟
+     * null = غير محدود → متوفر
+     */
+    public function isInStockForBranch(Branch $branch): bool
+    {
+        $pivot = $this->branches->firstWhere('id', $branch->id)?->pivot;
+
+        if (! $pivot || ! $pivot->is_available) {
+            return false;
+        }
+
+        // null = غير محدود
+        if ($pivot->stock === null) {
+            return true;
+        }
+
+        return (int) $pivot->stock > 0;
     }
 
     /* ============================================================

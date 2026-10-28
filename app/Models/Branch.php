@@ -14,8 +14,8 @@ class Branch extends Model
     protected $fillable = [
         'name_ar',
         'name_en',
-        'address_ar',      // ← جديد
-        'address_en',      // ← جديد
+        'address_ar',
+        'address_en',
         'lat',
         'lng',
         'default_radius_meters',
@@ -24,8 +24,8 @@ class Branch extends Model
         'is_online_paused',
         'pause_reason',
         'paused_at',
-        'email',   // ← جديد
-        'phone', 
+        'email',
+        'phone',
         'logo',
         'social_links',
         'current_prep_offset_minutes',
@@ -33,68 +33,26 @@ class Branch extends Model
     ];
 
     protected $casts = [
-        'lat'                   => 'decimal:7',
-        'lng'                   => 'decimal:7',
-        'default_radius_meters' => 'integer',
-        'is_active'             => 'boolean',
-        'is_main'               => 'boolean',
-        'is_online_paused'      => 'boolean',
-        'paused_at'             => 'datetime',
-        'social_links'          => 'array',
+        'lat'                         => 'decimal:7',
+        'lng'                         => 'decimal:7',
+        'default_radius_meters'       => 'integer',
+        'is_active'                   => 'boolean',
+        'is_main'                     => 'boolean',
+        'is_online_paused'            => 'boolean',
+        'paused_at'                   => 'datetime',
+        'social_links'                => 'array',
         'current_prep_offset_minutes' => 'integer',
-        'prep_offset_updated_at' => 'datetime',
+        'prep_offset_updated_at'      => 'datetime',
     ];
 
-  
-  // في الـ Relations
-public function workingHours(): HasMany
-{
-    return $this->hasMany(BranchWorkingHour::class)->orderBy('day_of_week');
-}
-
-/**
- * هل الفرع مفتوح دلوقتي؟
- * بيرجع true لو مفيش مواعيد متسجلة أصلاً (عشان ميكسرش الفروع القديمة).
- */
-public function isOpenNow(?\Carbon\Carbon $at = null): bool
-{
-    $at = $at ?? now();
-
-    $hour = $this->workingHours()
-        ->where('day_of_week', $at->dayOfWeek)
-        ->first();
-
-    // لو مفيش سجل لليوم ده → نعتبره مفتوح (backward compatible)
-    if (! $hour) {
-        return true;
-    }
-
-    if ($hour->isClosed()) {
-        return false;
-    }
-
-    $current = $at->format('H:i:s');
-
-    // يدعم الحالة اللي بتقفل بعد منتصف الليل (مثلاً 18:00 → 02:00)
-    if ($hour->opens_at <= $hour->closes_at) {
-        return $current >= $hour->opens_at && $current <= $hour->closes_at;
-    }
-
-    // عبر منتصف الليل
-    return $current >= $hour->opens_at || $current <= $hour->closes_at;
-}
-
-/** مواعيد اليوم الحالي */
-public function todayWorkingHours(): ?BranchWorkingHour
-{
-    return $this->workingHours()
-        ->where('day_of_week', now()->dayOfWeek)
-        ->first();
-}
-  
     /* ============================================================
      |  Relations
      ============================================================ */
+
+    public function workingHours(): HasMany
+    {
+        return $this->hasMany(BranchWorkingHour::class)->orderBy('day_of_week');
+    }
 
     public function qrCodes(): HasMany
     {
@@ -119,8 +77,52 @@ public function todayWorkingHours(): ?BranchWorkingHour
     public function menuItems(): BelongsToMany
     {
         return $this->belongsToMany(MenuItem::class, 'menu_item_branch')
-            ->withPivot(['price_override', 'is_available', 'is_featured'])
+            ->withPivot(['price_override', 'is_available', 'is_featured', 'stock'])
             ->withTimestamps();
+    }
+
+    /* ============================================================
+     |  Helpers
+     ============================================================ */
+
+    /**
+     * هل الفرع مفتوح دلوقتي؟
+     * بيرجع true لو مفيش مواعيد متسجلة أصلاً (backward compatible).
+     */
+    public function isOpenNow(?\Carbon\Carbon $at = null): bool
+    {
+        $at = $at ?? now();
+
+        $hour = $this->workingHours()
+            ->where('day_of_week', $at->dayOfWeek)
+            ->first();
+
+        // لو مفيش سجل لليوم ده → نعتبره مفتوح
+        if (! $hour) {
+            return true;
+        }
+
+        if ($hour->isClosed()) {
+            return false;
+        }
+
+        $current = $at->format('H:i:s');
+
+        // الحالة العادية (يفتح ويقفل في نفس اليوم)
+        if ($hour->opens_at <= $hour->closes_at) {
+            return $current >= $hour->opens_at && $current <= $hour->closes_at;
+        }
+
+        // عبر منتصف الليل (مثلاً 18:00 → 02:00)
+        return $current >= $hour->opens_at || $current <= $hour->closes_at;
+    }
+
+    /** مواعيد اليوم الحالي */
+    public function todayWorkingHours(): ?BranchWorkingHour
+    {
+        return $this->workingHours()
+            ->where('day_of_week', now()->dayOfWeek)
+            ->first();
     }
 
     /* ============================================================
