@@ -6,34 +6,60 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Store\StoreOrderRequest;
 use App\Models\Branch;
 use App\Models\Order;
+use App\Services\OnlinePaymentLinkService;
 use App\Services\OrderService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Exceptions\PaymentException;
+use App\Services\HyperpayService;
 
 class StoreCheckoutController extends Controller
 {
     public function __construct(
-        private readonly OrderService $orderService,
+    private readonly OrderService $orderService,
+    private readonly HyperpayService $hyperpay,
     ) {
     }
 
     /**
      * POST /api/store/orders
-     * الفرع هنا بيتحدد يدوي (أو أول فرع رئيسي) - المتجر مش مرتبط بموقع جغرافي زي QR.
+     * لو الـ body فيه "payment_method": "online" بيرجع رابط الدفع في payment.checkout_url
      */
-    public function store(StoreOrderRequest $request): JsonResponse
-    {
-        $branch = Branch::main()->first() ?? Branch::active()->firstOrFail();
+  public function store(StoreOrderRequest $request): JsonResponse
+{
+    $branch = Branch::main()->first() ?? Branch::active()->firstOrFail();
 
-        $result = $this->orderService->createStoreOrder($branch, $request->validated());
+    $payload = $request->validated();
 
-        return response()->json([
-            'order' => $this->orderService->serializeOrder($result['order']),
-            'customer_auth_token' => $result['customer_auth_token'],
-            'payment' => $result['payment'] ?? null,
-        ], 201);
+    $result = $this->orderService->createStoreOrder($branch, $payload);
+    $order  = $result['order'];
+
+    $payment = null;
+    $paymentError = null;
+
+    if ($request->input('payment_method') === 'online') {
+        try {
+            $online = $this->hyperpay->initiate($order, [
+                'email'      => $payload['customer']['email'] ?? null,
+                'given_name' => $payload['customer']['name'] ?? null,
+                'city'       => $payload['shipping']['city'] ?? null,
+            ]);
+
+            $payment = $this->hyperpay->checkoutPayload($online);
+        } catch (PaymentException $e) {
+            report($e);
+            $paymentError = $e->getMessage();
+        }
     }
 
+    return response()->json([
+        'order'                => $this->orderService->serializeOrder($order),
+        'customer_auth_token'  => $result['customer_auth_token'],
+        'customer_credentials' => $result['customer_credentials'],
+        'payment'              => $payment,
+        'payment_error'        => $paymentError,
+    ], 201);
+}
     /**
      * GET /api/store/orders/{order}
      */

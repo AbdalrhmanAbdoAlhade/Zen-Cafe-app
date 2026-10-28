@@ -25,52 +25,71 @@ class ProductController extends Controller
         return response()->json($products->through(fn (Product $p) => $this->withPricing($p)));
     }
 
-    public function store(Request $request)
-    {
-        $data = $request->validate([
-            'category_id' => ['required', 'exists:product_categories,id'],
-            'name_ar' => ['required', 'string', 'max:255'],
-            'name_en' => ['required', 'string', 'max:255'],
-            'description_ar' => ['nullable', 'string'],
-            'description_en' => ['nullable', 'string'],
-            'base_price' => ['required', 'numeric', 'min:0'],
-            'vat' => ['nullable', 'numeric', 'min:0', 'max:100'],
-            'is_available' => ['nullable', 'boolean'],
-            'is_featured' => ['nullable', 'boolean'],
-            'sku' => ['nullable', 'string', 'max:100', 'unique:products,sku'],
-            'country_of_origin' => ['nullable', 'string', 'max:100'],
-            'roast_date' => ['nullable', 'date'],
-            'brewing_method' => ['nullable', 'string', 'max:100'],
+  public function store(Request $request)
+{
+    $data = $request->validate([
+        'category_id'               => ['required', 'exists:product_categories,id'],
+        'name_ar'                   => ['required', 'string', 'max:255'],
+        'name_en'                   => ['required', 'string', 'max:255'],
+        'description_ar'            => ['nullable', 'string'],
+        'description_en'            => ['nullable', 'string'],
+        'base_price'                => ['required', 'numeric', 'min:0'],
+        'vat'                       => ['nullable', 'numeric', 'min:0', 'max:100'],
+        'is_available'              => ['nullable', 'boolean'],
+        'is_featured'               => ['nullable', 'boolean'],
+        'sku'                       => ['nullable', 'string', 'max:100', 'unique:products,sku'],
+        'country_of_origin'         => ['nullable', 'string', 'max:100'],
+        'roast_date'                => ['nullable', 'date'],
+        'brewing_method'            => ['nullable', 'string', 'max:100'],
 
-            'images' => ['nullable', 'array'],
-            'images.*' => ['image', 'max:2048'],
+        // مخزون المنتج نفسه (يستخدم لما مفيش variants)
+        'stock_quantity'            => ['nullable', 'integer', 'min:0'],
+        'low_stock_threshold'       => ['nullable', 'integer', 'min:0'],
 
-            'variants' => ['required', 'array', 'min:1'],
-            'variants.*.attributes' => ['nullable', 'array'],
-            'variants.*.price_override' => ['nullable', 'numeric', 'min:0'],
-            'variants.*.sku' => ['nullable', 'string', 'max:100'],
-            'variants.*.stock_quantity' => ['required', 'integer', 'min:0'],
-            'variants.*.low_stock_threshold' => ['nullable', 'integer', 'min:0'],
-        ]);
+        'images'                    => ['nullable', 'array'],
+        'images.*'                  => ['image', 'max:2048'],
 
-        $data['slug'] = Str::slug($data['name_en']) . '-' . Str::random(6);
-        $data['is_available'] = $data['is_available'] ?? true;
-        $data['is_featured'] = $data['is_featured'] ?? false;
+        // variants بقى اختياري
+        'variants'                  => ['nullable', 'array'],
+        'variants.*.attributes'     => ['nullable', 'array'],
+        'variants.*.price_override' => ['nullable', 'numeric', 'min:0'],
+        'variants.*.sku'            => ['nullable', 'string', 'max:100'],
+        'variants.*.stock_quantity' => ['required_with:variants', 'integer', 'min:0'],
+        'variants.*.low_stock_threshold' => ['nullable', 'integer', 'min:0'],
+    ]);
 
-      $product = DB::transaction(function () use ($data, $request) {
-    $product = Product::create(collect($data)->except(['images', 'variants'])->all());
-
-    foreach ($data['variants'] as $i => $variantData) {
-        ProductVariant::create([
-            'product_id' => $product->id,
-            'attributes' => $variantData['attributes'] ?? null,
-            'price_override' => $variantData['price_override'] ?? null,
-            'sku' => $variantData['sku'] ?? null,
-            'stock_quantity' => $variantData['stock_quantity'],
-            'low_stock_threshold' => $variantData['low_stock_threshold'] ?? 5,
+    // لو مفيش variants → stock_quantity مطلوب
+    if (empty($data['variants'])) {
+        $request->validate([
+            'stock_quantity' => ['required', 'integer', 'min:0'],
         ]);
     }
 
+    $data['slug']                 = Str::slug($data['name_en']) . '-' . Str::random(6);
+    $data['is_available']         = $data['is_available'] ?? true;
+    $data['is_featured']          = $data['is_featured'] ?? false;
+    $data['stock_quantity']       = $data['stock_quantity'] ?? 0;
+    $data['low_stock_threshold']  = $data['low_stock_threshold'] ?? 5;
+
+    $product = DB::transaction(function () use ($data, $request) {
+
+        $product = Product::create(
+            collect($data)->except(['images', 'variants'])->all()
+        );
+
+        // إنشاء الـ variants لو موجودة
+        foreach ($data['variants'] ?? [] as $variantData) {
+            ProductVariant::create([
+                'product_id'          => $product->id,
+                'attributes'          => $variantData['attributes'] ?? null,
+                'price_override'      => $variantData['price_override'] ?? null,
+                'sku'                 => $variantData['sku'] ?? null,
+                'stock_quantity'      => $variantData['stock_quantity'],
+                'low_stock_threshold' => $variantData['low_stock_threshold'] ?? 5,
+            ]);
+        }
+
+        // رفع الصور
         foreach ($request->file('images', []) as $index => $image) {
             ProductImage::create([
                 'product_id' => $product->id,
@@ -82,11 +101,48 @@ class ProductController extends Controller
         return $product;
     });
 
-        return response()->json([
-            'message' => 'تم إنشاء المنتج بنجاح',
-            'data' => $this->withPricing($product->fresh(['category', 'images', 'variants'])),
-        ], 201);
-    }
+    return response()->json([
+        'message' => 'تم إنشاء المنتج بنجاح',
+        'data'    => $this->withPricing($product->fresh(['category', 'images', 'variants'])),
+    ], 201);
+}
+
+public function update(Request $request, Product $product)
+{
+    $data = $request->validate([
+        'category_id'               => ['sometimes', 'exists:product_categories,id'],
+        'name_ar'                   => ['sometimes', 'string', 'max:255'],
+        'name_en'                   => ['sometimes', 'string', 'max:255'],
+        'description_ar'            => ['nullable', 'string'],
+        'description_en'            => ['nullable', 'string'],
+        'base_price'                => ['sometimes', 'numeric', 'min:0'],
+        'vat'                       => ['nullable', 'numeric', 'min:0', 'max:100'],
+        'is_available'              => ['nullable', 'boolean'],
+        'is_featured'               => ['nullable', 'boolean'],
+        'sku'                       => ['nullable', 'string', 'max:100', 'unique:products,sku,' . $product->id],
+        'country_of_origin'         => ['nullable', 'string', 'max:100'],
+        'roast_date'                => ['nullable', 'date'],
+        'brewing_method'            => ['nullable', 'string', 'max:100'],
+
+        // مخزون المنتج نفسه
+        'stock_quantity'            => ['sometimes', 'integer', 'min:0'],
+        'low_stock_threshold'       => ['nullable', 'integer', 'min:0'],
+    ]);
+
+    // لو المنتج ليه variants ومش هتعدل الـ stock بتاعه، ممكن تمنع التعديل (اختياري)
+    // if ($product->variants()->exists() && array_key_exists('stock_quantity', $data)) {
+    //     return response()->json([
+    //         'message' => 'هذا المنتج له خيارات، عدّل المخزون من خلال الـ variants',
+    //     ], 422);
+    // }
+
+    $product->update($data);
+
+    return response()->json([
+        'message' => 'تم تحديث المنتج',
+        'data'    => $this->withPricing($product->fresh(['category', 'images', 'variants'])),
+    ]);
+}
 
     public function show(Product $product)
     {
@@ -95,30 +151,7 @@ class ProductController extends Controller
         return response()->json(['data' => $this->withPricing($product)]);
     }
 
-    public function update(Request $request, Product $product)
-    {
-        $data = $request->validate([
-            'category_id' => ['sometimes', 'exists:product_categories,id'],
-            'name_ar' => ['sometimes', 'string', 'max:255'],
-            'name_en' => ['sometimes', 'string', 'max:255'],
-            'description_ar' => ['nullable', 'string'],
-            'description_en' => ['nullable', 'string'],
-            'base_price' => ['sometimes', 'numeric', 'min:0'],
-            'vat' => ['nullable', 'numeric', 'min:0', 'max:100'],
-            'is_available' => ['nullable', 'boolean'],
-            'is_featured' => ['nullable', 'boolean'],
-            'country_of_origin' => ['nullable', 'string', 'max:100'],
-            'roast_date' => ['nullable', 'date'],
-            'brewing_method' => ['nullable', 'string', 'max:100'],
-        ]);
-
-        $product->update($data);
-
-        return response()->json([
-            'message' => 'تم تحديث المنتج',
-            'data' => $this->withPricing($product->fresh(['category', 'images', 'variants'])),
-        ]);
-    }
+    
 
     public function destroy(Product $product)
     {

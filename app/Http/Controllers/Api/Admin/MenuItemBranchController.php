@@ -27,13 +27,14 @@ class MenuItemBranchController extends Controller
     }
 
     /** ربط صنف بفرع (أو تحديث لو موجود) */
-    public function attach(Request $request, MenuItem $item)
+      public function attach(Request $request, MenuItem $item)
     {
         $data = $request->validate([
             'branch_id'      => ['required', 'exists:branches,id'],
             'price_override' => ['nullable', 'numeric', 'min:0'],
             'is_available'   => ['nullable', 'boolean'],
             'is_featured'    => ['nullable', 'boolean'],
+            'stock'          => ['nullable', 'integer', 'min:0'],
         ]);
 
         $item->branches()->syncWithoutDetaching([
@@ -41,6 +42,7 @@ class MenuItemBranchController extends Controller
                 'price_override' => $data['price_override'] ?? null,
                 'is_available'   => $data['is_available'] ?? true,
                 'is_featured'    => $data['is_featured'] ?? false,
+                'stock'          => $data['stock'] ?? null,
             ],
         ]);
 
@@ -53,31 +55,48 @@ class MenuItemBranchController extends Controller
     }
 
     /** تحديث إعدادات الصنف داخل فرع معين */
-    public function update(Request $request, MenuItem $item, Branch $branch)
-    {
-        if (! $item->branches()->where('branch_id', $branch->id)->exists()) {
-            return response()->json(['message' => 'الصنف غير مربوط بهذا الفرع'], 404);
-        }
+          public function update(Request $request, MenuItem $item, Branch $branch)
+      {
+          if (! $item->branches()->where('branch_id', $branch->id)->exists()) {
+              return response()->json(['message' => 'الصنف غير مربوط بهذا الفرع'], 404);
+          }
 
-        $data = $request->validate([
-            'price_override' => ['nullable', 'numeric', 'min:0'],
-            'is_available'   => ['nullable', 'boolean'],
-            'is_featured'    => ['nullable', 'boolean'],
-        ]);
+          $data = $request->validate([
+              'price_override' => ['nullable', 'numeric', 'min:0'],
+              'is_available'   => ['nullable', 'boolean'],
+              'is_featured'    => ['nullable', 'boolean'],
+              'stock'          => ['nullable', 'integer', 'min:0'],
+          ]);
 
-        $item->branches()->updateExistingPivot($branch->id, array_filter([
-            'price_override' => $data['price_override'] ?? null,
-            'is_available'   => $data['is_available'] ?? null,
-            'is_featured'    => $data['is_featured'] ?? null,
-        ], fn ($v) => ! is_null($v)));
+          $item->branches()->updateExistingPivot($branch->id, array_filter([
+              'price_override' => $data['price_override'] ?? null,
+              'is_available'   => $data['is_available'] ?? null,
+              'is_featured'    => $data['is_featured'] ?? null,
+              'stock'          => array_key_exists('stock', $data) ? $data['stock'] : null,
+          ], fn ($v) => ! is_null($v)));
 
-        $pivot = $item->branches()->where('branch_id', $branch->id)->first();
+          // ملاحظة: لو عايز تسمح بـ null صراحة (غير محدود)، استخدم:
+          // $updates = collect($data)->only([...])->filter(fn($v) => $v !== null || array_key_exists(...))->all();
+          // أفضل طريقة نظيفة:
 
-        return response()->json([
-            'message' => 'تم تحديث إعدادات الصنف في الفرع',
-            'data'    => $pivot,
-        ]);
-    }
+          $updates = [];
+          foreach (['price_override', 'is_available', 'is_featured', 'stock'] as $field) {
+              if (array_key_exists($field, $data)) {
+                  $updates[$field] = $data[$field];
+              }
+          }
+
+          if (!empty($updates)) {
+              $item->branches()->updateExistingPivot($branch->id, $updates);
+          }
+
+          $pivot = $item->branches()->where('branch_id', $branch->id)->first();
+
+          return response()->json([
+              'message' => 'تم تحديث إعدادات الصنف في الفرع',
+              'data'    => $pivot,
+          ]);
+      }
 
     /** فك الربط */
     public function detach(MenuItem $item, Branch $branch)

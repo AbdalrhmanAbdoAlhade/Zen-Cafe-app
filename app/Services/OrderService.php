@@ -6,6 +6,7 @@ use App\Events\OrderCreated;
 use App\Exceptions\OrderItemUnavailableException;
 use App\Exceptions\ReorderUnavailableException;
 use App\Models\Branch;
+use App\Models\Cart;
 use App\Models\Customer;
 use App\Models\MenuOptionValue;
 use App\Models\OnlinePayment;
@@ -22,6 +23,7 @@ class OrderService
         private readonly CartValidationService $cartValidation,
         private readonly StockService $stockService,
         private readonly CouponService $couponService,
+        private readonly CartService $cartService,
     ) {
     }
 
@@ -33,6 +35,57 @@ class OrderService
     public function createOnlineOrder(Branch $branch, array $payload): array
     {
         return $this->create($branch, $payload, null, true);
+    }
+
+    /**
+     * لو الطلب جاي من سلة محفوظة — حوّل حالة السلة لـ converted وفضّيها.
+     * بيتجاهل السلة (ويسجّل تحذير) لو نوعها مش مطابق لنوع الأوردر
+     * أو لو تخص عميل تاني.
+     */
+    private function linkCartIfPresent(array $payload, Order $order): void
+    {
+        $cartId = $payload['cart_id'] ?? null;
+        if (! $cartId) {
+            return;
+        }
+
+        $cart = Cart::query()->find($cartId);
+        if (! $cart) {
+            return;
+        }
+
+        $expectedType = $order->order_type === 'store'
+            ? Cart::TYPE_STORE
+            : Cart::TYPE_MENU;
+
+        if ($cart->cart_type !== $expectedType) {
+            logger()->warning('cart_id ignored: cart type mismatch', [
+                'cart_id' => $cart->id,
+                'cart_type' => $cart->cart_type,
+                'order_id' => $order->id,
+                'order_type' => $order->order_type,
+            ]);
+
+            return;
+        }
+
+        if ($cart->customer_id && $order->customer_id
+            && (int) $cart->customer_id !== (int) $order->customer_id) {
+            logger()->warning('cart_id ignored: customer mismatch', [
+                'cart_id' => $cart->id,
+                'cart_customer_id' => $cart->customer_id,
+                'order_id' => $order->id,
+                'order_customer_id' => $order->customer_id,
+            ]);
+
+            return;
+        }
+
+        try {
+            $this->cartService->markConvertedAndClear($cart, $order);
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     /**
@@ -48,8 +101,8 @@ class OrderService
         ?string $fulfillmentType = null
     ): array {
         $sourceOrder->loadMissing('items.menuItem', 'items.options');
-        $branch = $sourceOrder->branch;
 
+        $branch = $sourceOrder->branch;
         $items = [];
         $skipped = [];
 
@@ -86,7 +139,6 @@ class OrderService
             throw new ReorderUnavailableException();
         }
 
-        // أولوية: القيمة الممررة → نوع الطلب القديم لو كان صالح → pickup افتراضي
         $resolvedFulfillment = $fulfillmentType
             ?? (in_array($sourceOrder->fulfillment_type, [
                 Order::FULFILLMENT_PICKUP,
@@ -207,6 +259,8 @@ class OrderService
 
             event(new OrderCreated($order));
 
+            $this->linkCartIfPresent($payload, $order);
+
             return [
                 'order' => $order->fresh(['items.productVariant.product', 'branch', 'shipment']),
                 'customer_credentials' => $plainPassword ? [
@@ -240,6 +294,7 @@ class OrderService
             'product_variant_id' => $variant->id,
             'quantity' => $quantity,
             'unit_price' => $unitPrice,
+            'unit_cost' => $variant->cost !== null ? (float) $variant->cost : null,
             'notes' => $cartItem['notes'] ?? null,
         ]);
 
@@ -259,10 +314,8 @@ class OrderService
             // QR على الطاولة: fulfillment_type = null
             // منيو أونلاين: إجباري pickup | dine_in
             $fulfillmentType = null;
-
             if ($online) {
                 $fulfillmentType = $payload['fulfillment_type'] ?? null;
-
                 if (! in_array($fulfillmentType, [
                     Order::FULFILLMENT_PICKUP,
                     Order::FULFILLMENT_DINE_IN,
@@ -347,6 +400,8 @@ class OrderService
 
             event(new OrderCreated($order));
 
+            $this->linkCartIfPresent($payload, $order);
+
             return [
                 'order' => $order->fresh(['items.menuItem', 'items.options.menuOptionValue', 'branch', 'table']),
                 'customer_credentials' => $plainPassword ? [
@@ -381,6 +436,7 @@ class OrderService
             'menu_item_id' => $item->id,
             'quantity' => $quantity,
             'unit_price' => $unitPrice,
+            'unit_cost' => $item->cost !== null ? (float) $item->cost : null,
             'preparation_time_minutes' => $prep,
             'vat' => $item->vat,
             'notes' => $cartItem['notes'] ?? null,
@@ -401,6 +457,7 @@ class OrderService
         }
 
         $orderItem->load('options');
+
         $lineBase = $orderItem->lineBaseAmount();
         $lineVat = $orderItem->lineVatAmount();
 
@@ -431,6 +488,8 @@ class OrderService
 
         return [$customer, $plainPassword];
     }
+
+
 
     public function serializeOrder(Order $order): array
     {

@@ -236,4 +236,160 @@ public function settleAndPay(RecordPaymentRequest $request, Order $order): JsonR
 
         return $data;
     }
+  
+  		/**
+ * POST /api/cashier/orders/{order}/paid
+ * تأكيد دفع أوردر متجر (لو مش مدفوع أونلاين)
+ */
+public function markStorePaid(Request $request, Order $order): JsonResponse
+{
+    if ($deny = $this->denyAdmin($request)) {
+        return $deny;
+    }
+
+    $this->authorizeSameBranch($request, $order);
+    $this->ensureStoreOrder($order);
+
+    if ($order->status !== Order::STATUS_PENDING) {
+        return response()->json([
+            'message' => 'لا يمكن تأكيد الدفع إلا من حالة pending',
+        ], 422);
+    }
+
+    $order->update(['status' => Order::STATUS_PAID]);
+
+    // لو عندك OrderStatusLog
+    \App\Models\OrderStatusLog::create([
+        'order_id' => $order->id,
+        'status' => Order::STATUS_PAID,
+        'changed_by_staff_id' => $request->user('staff')?->id,
+    ]);
+
+    return response()->json([
+        'message' => 'تم تأكيد الدفع',
+        'order' => $this->formatOrder($order->fresh()),
+    ]);
+}
+
+/**
+ * POST /api/cashier/orders/{order}/shipped
+ * Body اختياري: { "tracking_number": "123ABC" }
+ */
+public function markShipped(Request $request, Order $order): JsonResponse
+{
+    if ($deny = $this->denyAdmin($request)) {
+        return $deny;
+    }
+
+    $this->authorizeSameBranch($request, $order);
+    $this->ensureStoreOrder($order);
+
+    if ($order->status !== Order::STATUS_PAID) {
+        return response()->json([
+            'message' => 'لازم يكون الأوردر مدفوع قبل الشحن',
+        ], 422);
+    }
+
+    $shipment = $order->shipment;
+
+    if (! $shipment) {
+        return response()->json([
+            'message' => 'مفيش بيانات شحن لهذا الطلب',
+        ], 422);
+    }
+
+    if ($shipment->status === \App\Models\OrderShipment::STATUS_SHIPPED) {
+        return response()->json([
+            'message' => 'الأوردر مشحون بالفعل',
+        ], 422);
+    }
+
+    $tracking = $request->input('tracking_number');
+    $shipment->markShipped($tracking);
+
+    return response()->json([
+        'message' => 'تم تعليم الطلب كـ مشحون',
+        'order' => $this->formatOrder($order->fresh(['shipment'])),
+        'shipment' => $shipment->fresh(),
+    ]);
+}
+
+/**
+ * POST /api/cashier/orders/{order}/delivered
+ */
+public function markDelivered(Request $request, Order $order): JsonResponse
+{
+    if ($deny = $this->denyAdmin($request)) {
+        return $deny;
+    }
+
+    $this->authorizeSameBranch($request, $order);
+    $this->ensureStoreOrder($order);
+
+    $shipment = $order->shipment;
+
+    if (! $shipment) {
+        return response()->json([
+            'message' => 'مفيش بيانات شحن لهذا الطلب',
+        ], 422);
+    }
+
+    if ($shipment->status !== \App\Models\OrderShipment::STATUS_SHIPPED) {
+        return response()->json([
+            'message' => 'لازم يكون مشحون أولاً قبل التسليم',
+        ], 422);
+    }
+
+    $shipment->markDelivered();
+
+    return response()->json([
+        'message' => 'تم تعليم الطلب كـ تم التسليم',
+        'order' => $this->formatOrder($order->fresh(['shipment'])),
+        'shipment' => $shipment->fresh(),
+    ]);
+}
+
+/**
+ * POST /api/cashier/orders/{order}/cancel
+ */
+public function cancelStoreOrder(Request $request, Order $order): JsonResponse
+{
+    if ($deny = $this->denyAdmin($request)) {
+        return $deny;
+    }
+
+    $this->authorizeSameBranch($request, $order);
+    $this->ensureStoreOrder($order);
+
+    if (! in_array($order->status, [Order::STATUS_PENDING, Order::STATUS_PAID], true)) {
+        return response()->json([
+            'message' => 'لا يمكن إلغاء الطلب في حالته الحالية',
+        ], 422);
+    }
+
+    // لو مدفوع ومحتاج ترجع فلوس → STATUS_REFUNDED بدل cancelled
+    // هنا هنعمل cancel بسيط
+    $order->update(['status' => Order::STATUS_CANCELLED]);
+
+    \App\Models\OrderStatusLog::create([
+        'order_id' => $order->id,
+        'status' => Order::STATUS_CANCELLED,
+        'changed_by_staff_id' => $request->user('staff')?->id,
+    ]);
+
+    return response()->json([
+        'message' => 'تم إلغاء الطلب',
+        'order' => $this->formatOrder($order->fresh()),
+    ]);
+}
+
+/**
+ * تأكد إن الأوردر من نوع store
+ */
+private function ensureStoreOrder(Order $order): void
+{
+    if ($order->order_type !== 'store') {
+        abort(422, 'هذا الإجراء متاح فقط لأوردرات المتجر');
+    }
+}
 }

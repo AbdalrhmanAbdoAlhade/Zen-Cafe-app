@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers\Api\Menu;
 
+use App\Exceptions\PaymentException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Menu\StoreOrderRequest;
 use App\Models\Branch;
 use App\Models\BranchWorkingHour;
 use App\Models\Order;
+use App\Services\HyperpayService;
 use App\Services\MenuBuilderService;
 use App\Services\OrderService;
 use Illuminate\Http\JsonResponse;
@@ -16,7 +18,8 @@ class OnlineMenuController extends Controller
 {
     public function __construct(
         private readonly MenuBuilderService $menuBuilder,
-        private readonly OrderService $orders
+        private readonly OrderService $orders,
+        private readonly HyperpayService $hyperpay,
     ) {}
 
     /**
@@ -76,6 +79,10 @@ class OnlineMenuController extends Controller
         return response()->json(['data' => $item]);
     }
 
+    /**
+     * POST /api/menu/branches/{branchId}/orders  (حسب الـ route عندك)
+     * لو الـ body فيه "payment_method": "online" بيرجع رابط الدفع في payment.checkout_url
+     */
     public function store(StoreOrderRequest $request, int $branchId): JsonResponse
     {
         $branch = $this->branch($branchId);
@@ -93,11 +100,36 @@ class OnlineMenuController extends Controller
             ], 422);
         }
 
-        $result = $this->orders->createOnlineOrder($branch, $request->validated());
+        $payload = $request->validated();
 
+        // 1) إنشاء الأوردر (جوه transaction جوه OrderService)
+        $result = $this->orders->createOnlineOrder($branch, $payload);
+        $order  = $result['order'];
+
+        // 2) الدفع بعد ما الـ transaction تخلص، عشان فشل البوابة ما يلغيش الأوردر
+        $payment      = null;
+        $paymentError = null;
+
+        if ($request->input('payment_method') === 'online') {
+            try {
+                $online = $this->hyperpay->initiate($order, [
+                    'email'      => $payload['customer']['email'] ?? null,
+                    'given_name' => $payload['customer']['name'] ?? null,
+                ]);
+
+                $payment = $this->hyperpay->checkoutPayload($online);
+            } catch (PaymentException $e) {
+                report($e);
+                $paymentError = $e->getMessage();
+            }
+        }
+
+        // 3) serializeOrder بعد initiate، عشان online_payment_status يطلع "initiated"
         return response()->json([
-            'order'               => $this->orders->serializeOrder($result['order']),
+            'order'               => $this->orders->serializeOrder($order),
             'customer_auth_token' => $result['customer_auth_token'],
+            'payment'             => $payment,
+            'payment_error'       => $paymentError,
         ], 201);
     }
 

@@ -163,15 +163,25 @@ class MenuItemController extends Controller
         ]);
     }
 
-    public function destroy(MenuItem $item)
-    {
-        $this->deleteImage($item->image);
+  public function destroy(MenuItem $item)
+  {
+      // تحقق إذا كان الصنف مرتبط بأي طلبات
+      if ($item->orderItems()->exists()) {
+          return response()->json([
+              'success' => false,
+              'message' => 'لا يمكن حذف هذا الصنف لأنه تم بيعه من قبل. يمكنك تعطيله بدلاً من حذفه للحفاظ على التقارير والفواتير.',
+              'error_code' => 'MENU_ITEM_HAS_ORDERS'
+          ], 422);
+      }
 
-        $item->delete(); // cascade على options + menu_item_branch
+      $this->deleteImage($item->image);
+      $item->delete();
 
-        return response()->json(['message' => 'تم حذف الصنف']);
-    }
-
+      return response()->json([
+          'success' => true,
+          'message' => 'تم حذف الصنف بنجاح'
+      ]);
+  }
     /**
      * يضيف pricing للصنف (بناءً على base_price)، ولو الفروع متحملة (show)
      * بيضيف pricing لكل فرع بناءً على price_override بتاعه.

@@ -18,7 +18,7 @@ class StoreOrderRequest extends FormRequest
             'customer.name' => ['required', 'string', 'max:150'],
             'customer.email' => ['nullable', 'email', 'max:150'],
             'customer.phone' => ['required', 'string', 'max:30'],
-
+			'cart_id' => ['nullable', 'integer', 'exists:carts,id'],
             'notes' => ['nullable', 'string', 'max:500'],
 
             'fulfillment_type' => ['required', 'in:pickup,shipping'],

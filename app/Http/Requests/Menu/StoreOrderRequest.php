@@ -18,12 +18,12 @@ class StoreOrderRequest extends FormRequest
             'customer.name' => ['nullable', 'string', 'max:150'],
             'customer.email' => ['nullable', 'email', 'max:150'],
             'customer.phone' => ['nullable', 'string', 'max:30'],
-
+			'cart_id' => ['nullable', 'integer', 'exists:carts,id'],
             'notes' => ['nullable', 'string', 'max:500'],
             'redeemed_points' => ['nullable', 'integer', 'min:0'],
             'received_at' => ['nullable', 'date', 'after_or_equal:now'],
             'coupon_code' => ['nullable', 'string', 'max:50'],
-
+			'payment_method' => ['nullable', 'in:online,cash'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.menu_item_id' => ['required', 'integer', 'exists:menu_items,id'],
             'items.*.quantity' => ['required', 'integer', 'min:1', 'max:50'],
