@@ -19,16 +19,14 @@ class HyperpayService
 {
     private const CHECKOUT_LINK_MINUTES = 30;
 
-    /** أكواد HyperPay/OPPWA الرسمية */
-/** أكواد HyperPay الرسمية - أوسع */
+    /** أكواد HyperPay الرسمية */
     private const SUCCESS   = '/^(000\.000\.|000\.100\.1|000\.[36]|000\.400\.[01][0-9]0)/';
     private const PENDING   = '/^(000\.200|800\.400\.5|100\.400\.500)/';
     private const NOT_FOUND = '/^(200\.300\.404|700\.400\.580)/';
-  
+
     /* ============================================================
      |  إنشاء عملية دفع + checkoutId
      ============================================================ */
-
     public function initiate(Order $order, array $billing = []): OnlinePayment
     {
         $this->assertConfigured();
@@ -78,15 +76,12 @@ class HyperpayService
             'integrity'             => 'true',
         ], $this->billingParams($order, $billing));
 
-        if (config('services.hyperpay.test_mode')) {
-            $params['testMode']                         = 'EXTERNAL';
-            $params['customParameters[3DS2_enrolled]']  = 'true';
-            $params['customParameters[3DS2_flow]']      = 'challenge';
-        }
+        // تم إزالة testMode و customParameters الخاصة بالاختبار بالكامل (وضع الإنتاج)
 
         $response = $this->send(fn () => $this->client()->post($this->url('v1/checkouts'), $params));
-        $json     = $response->json() ?? [];
-        $code     = (string) ($json['result']['code'] ?? '');
+
+        $json = $response->json() ?? [];
+        $code = (string) ($json['result']['code'] ?? '');
 
         if (! $response->successful() || empty($json['id']) || $code !== '000.200.100') {
             $payment->update([
@@ -110,8 +105,8 @@ class HyperpayService
 
         return $payment;
     }
-  
-      /**
+
+    /**
      * الشكل الموحد اللي بيرجع للفرونت بعد initiate()
      */
     public function checkoutPayload(OnlinePayment $payment): array
@@ -154,156 +149,163 @@ class HyperpayService
     /* ============================================================
      |  التحقق من حالة الدفع (المصدر الوحيد للحقيقة = البوابة)
      ============================================================ */
+       public function sync(OnlinePayment $payment): OnlinePayment
+    {
+        if (in_array($payment->status, [
+            OnlinePayment::STATUS_PAID,
+            OnlinePayment::STATUS_REFUNDED,
+            OnlinePayment::STATUS_REFUND_FAILED,
+        ], true)) {
+            return $payment;
+        }
 
-   public function sync(OnlinePayment $payment): OnlinePayment
-{
-    if (in_array($payment->status, [
-        OnlinePayment::STATUS_PAID,
-        OnlinePayment::STATUS_REFUNDED,
-        OnlinePayment::STATUS_REFUND_FAILED,
-    ], true)) {
-        return $payment;
-    }
+        if (! $payment->session_id) {
+            return $payment;
+        }
 
-    if (! $payment->session_id) {
-        return $payment;
-    }
+        $response = $this->send(fn () => $this->client()->get(
+            $this->url("v1/checkouts/{$payment->session_id}/payment"),
+            ['entityId' => config('services.hyperpay.entity_id')]
+        ));
 
-    $response = $this->send(fn () => $this->client()->get(
-        $this->url("v1/checkouts/{$payment->session_id}/payment"),
-        ['entityId' => config('services.hyperpay.entity_id')]
-    ));
+        $data = $response->json() ?? [];
+        $code = (string) ($data['result']['code'] ?? '');
 
-    $data = $response->json() ?? [];
-    $code = (string) ($data['result']['code'] ?? '');
+        // لسه مفيش دفع
+        if ($response->status() === 404 || preg_match(self::NOT_FOUND, $code)) {
+            return $payment;
+        }
 
-    // لسه مفيش دفع
-    if ($response->status() === 404 || preg_match(self::NOT_FOUND, $code)) {
-        return $payment;
-    }
+        if (! $response->successful()) {
+            Log::error('HyperPay status lookup failed', [
+                'payment_id' => $payment->id,
+                'http'       => $response->status(),
+                'body'       => $data,
+            ]);
+            throw new PaymentException('تعذر التحقق من حالة الدفع.');
+        }
 
-    if (! $response->successful()) {
-        Log::error('HyperPay status lookup failed', [
-            'payment_id' => $payment->id,
-            'http'       => $response->status(),
-            'body'       => $data,
+        // نجح
+        if (preg_match(self::SUCCESS, $code)) {
+            return $this->markPaid($payment, $data);
+        }
+
+        // لسه Pending (شائع جداً بعد الـ 3DS مباشرة)
+        if (preg_match(self::PENDING, $code)) {
+            Log::info('HyperPay still pending after 3DS', [
+                'payment_id' => $payment->id,
+                'code'       => $code,
+            ]);
+            return $payment; // سيبه initiated
+        }
+
+        // أي كود تاني = رفض نهائي → نسجله failed
+        Log::warning('HyperPay payment rejected', [
+            'payment_id'  => $payment->id,
+            'code'        => $code,
+            'description' => $data['result']['description'] ?? null,
         ]);
-        throw new PaymentException('تعذر التحقق من حالة الدفع.');
-    }
 
-    // نجح
-    if (preg_match(self::SUCCESS, $code)) {
-        return $this->markPaid($payment, $data);
-    }
-
-    // لسه Pending (شائع جداً بعد الـ 3DS مباشرة)
-    if (preg_match(self::PENDING, $code)) {
-        Log::info('HyperPay still pending after 3DS', [
-            'payment_id' => $payment->id,
-            'code'       => $code,
-        ]);
-        return $payment; // سيبه initiated
-    }
-
-    // أي كود تاني → متعتبرهوش فشل نهائي
-    Log::warning('HyperPay unknown code - NOT marking as failed', [
-        'payment_id'  => $payment->id,
-        'code'        => $code,
-        'description' => $data['result']['description'] ?? null,
-        'full'        => $data,
-    ]);
-
-    // مهم جداً: ما نحطش failed هنا
-    return $payment;
-}
-   private function markPaid(OnlinePayment $payment, array $data): OnlinePayment
-{
-    $amount   = (float) ($data['amount'] ?? 0);
-    $currency = strtoupper((string) ($data['currency'] ?? ''));
-    $merchTx  = (string) ($data['merchantTransactionId'] ?? '');
-    $type     = strtoupper((string) ($data['paymentType'] ?? ''));
-
-    // أي اختلاف في المبلغ/العملة/المعرّف/النوع = مش بنعتبرها مدفوعة
-    if (
-        abs($amount - (float) $payment->amount) > 0.001
-        || $currency !== $payment->currency
-        || $merchTx !== $payment->gateway_order_id
-        || $type !== 'DB'
-    ) {
-        Log::critical('HyperPay amount/currency/reference mismatch', [
-            'payment_id' => $payment->id,
-            'expected'   => [(float) $payment->amount, $payment->currency, $payment->gateway_order_id, 'DB'],
-            'received'   => [$amount, $currency, $merchTx, $type],
-        ]);
         $payment->update([
-            'gateway_response' => array_merge((array) $payment->gateway_response, ['mismatch' => $data]),
+            'status'           => OnlinePayment::STATUS_FAILED,
+            'gateway_response' => array_merge((array) $payment->gateway_response, [
+                'result'      => $data,
+                'failed_at'   => now()->toDateTimeString(),
+                'fail_reason' => $data['result']['description'] ?? $code,
+            ]),
         ]);
 
         return $payment->refresh();
     }
 
-    $needsRefund = false;
+    private function markPaid(OnlinePayment $payment, array $data): OnlinePayment
+    {
+        $amount   = (float) ($data['amount'] ?? 0);
+        $currency = strtoupper((string) ($data['currency'] ?? ''));
+        $merchTx  = (string) ($data['merchantTransactionId'] ?? '');
+        $type     = strtoupper((string) ($data['paymentType'] ?? ''));
 
-    DB::transaction(function () use ($payment, $data, &$needsRefund) {
-        $locked = OnlinePayment::whereKey($payment->id)->lockForUpdate()->first();
-
-        if (in_array($locked->status, [
-            OnlinePayment::STATUS_PAID,
-            OnlinePayment::STATUS_REFUNDED,
-            OnlinePayment::STATUS_REFUND_FAILED,
-        ], true)) {
-            return; // اتعالجت قبل كده
-        }
-
-        $order = Order::whereKey($locked->order_id)->lockForUpdate()->first();
-
-        $duplicate = OnlinePayment::where('order_id', $locked->order_id)
-            ->where('status', OnlinePayment::STATUS_PAID)
-            ->where('id', '!=', $locked->id)
-            ->exists();
-
-        $locked->update([
-            'status'           => OnlinePayment::STATUS_PAID,
-            'transaction_id'   => $data['id'] ?? null,
-            'paid_at'          => now(),
-            'gateway_response' => array_merge((array) $locked->gateway_response, ['result' => $data]),
-        ]);
-
-        // دفع مرتين، أو الطلب اتلغى/اترفض وهو بيدفع → نرجّع الفلوس
-        $needsRefund = $duplicate
-            || in_array($order->status, [Order::STATUS_CANCELLED, Order::STATUS_REJECTED], true);
-    });
-
-    $payment->refresh();
-
-    if ($needsRefund) {
-        try {
-            $this->refund($payment);
-        } catch (PaymentException $e) {
-            Log::error('HyperPay auto refund failed', ['payment_id' => $payment->id]);
-        }
-    } else {
-        $this->closeOrderAfterPayment($payment);
-
-        // إشعار مستقل — لا يرمي ولا يؤثر على الدفع
-        try {
-            app(\App\Services\PaymentNotificationService::class)
-                ->notifyPaymentSuccess($payment->refresh());
-        } catch (\Throwable $e) {
-            Log::error('Payment success notification dispatch error', [
+        // أي اختلاف في المبلغ/العملة/المعرّف/النوع = مش بنعتبرها مدفوعة
+        if (
+            abs($amount - (float) $payment->amount) > 0.001
+            || $currency !== $payment->currency
+            || $merchTx !== $payment->gateway_order_id
+            || $type !== 'DB'
+        ) {
+            Log::critical('HyperPay amount/currency/reference mismatch', [
                 'payment_id' => $payment->id,
-                'message'    => $e->getMessage(),
+                'expected'   => [(float) $payment->amount, $payment->currency, $payment->gateway_order_id, 'DB'],
+                'received'   => [$amount, $currency, $merchTx, $type],
             ]);
-        }
-    }
 
-    return $payment->refresh();
-}
+            $payment->update([
+                'gateway_response' => array_merge((array) $payment->gateway_response, ['mismatch' => $data]),
+            ]);
+
+            return $payment->refresh();
+        }
+
+        $needsRefund = false;
+
+        DB::transaction(function () use ($payment, $data, &$needsRefund) {
+            $locked = OnlinePayment::whereKey($payment->id)->lockForUpdate()->first();
+
+            if (in_array($locked->status, [
+                OnlinePayment::STATUS_PAID,
+                OnlinePayment::STATUS_REFUNDED,
+                OnlinePayment::STATUS_REFUND_FAILED,
+            ], true)) {
+                return; // اتعالجت قبل كده
+            }
+
+            $order = Order::whereKey($locked->order_id)->lockForUpdate()->first();
+
+            $duplicate = OnlinePayment::where('order_id', $locked->order_id)
+                ->where('status', OnlinePayment::STATUS_PAID)
+                ->where('id', '!=', $locked->id)
+                ->exists();
+
+            $locked->update([
+                'status'           => OnlinePayment::STATUS_PAID,
+                'transaction_id'   => $data['id'] ?? null,
+                'paid_at'          => now(),
+                'gateway_response' => array_merge((array) $locked->gateway_response, ['result' => $data]),
+            ]);
+
+            // دفع مرتين، أو الطلب اتلغى/اترفض وهو بيدفع → نرجّع الفلوس
+            $needsRefund = $duplicate
+                || in_array($order->status, [Order::STATUS_CANCELLED, Order::STATUS_REJECTED], true);
+        });
+
+        $payment->refresh();
+
+        if ($needsRefund) {
+            try {
+                $this->refund($payment);
+            } catch (PaymentException $e) {
+                Log::error('HyperPay auto refund failed', ['payment_id' => $payment->id]);
+            }
+        } else {
+            $this->closeOrderAfterPayment($payment);
+
+            // إشعار مستقل — لا يرمي ولا يؤثر على الدفع
+            try {
+                app(\App\Services\PaymentNotificationService::class)
+                    ->notifyPaymentSuccess($payment->refresh());
+            } catch (\Throwable $e) {
+                Log::error('Payment success notification dispatch error', [
+                    'payment_id' => $payment->id,
+                    'message'    => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $payment->refresh();
+    }
 
     /* ============================================================
      |  الاسترجاع (RF، ولو فشل يجرّب RV = إلغاء قبل التسوية)
      ============================================================ */
-
     public function refund(OnlinePayment $payment): OnlinePayment
     {
         if (! in_array($payment->status, [
@@ -386,6 +388,7 @@ class HyperpayService
     /* ============================================================
      |  Helpers
      ============================================================ */
+
     /**
      * بعد نجاح الدفع: نقفل الأوردر (paid) ونحسب نقاط الولاء.
      * مش بترمي exception عشان تأكيد الدفع نفسه ما يتأثرش.
@@ -410,7 +413,7 @@ class HyperpayService
             ]);
         }
     }
-  	
+
     private function billingParams(Order $order, array $in): array
     {
         $d        = (array) config('services.hyperpay.billing');

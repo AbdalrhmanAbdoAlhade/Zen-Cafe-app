@@ -39,8 +39,6 @@ class OrderService
 
     /**
      * لو الطلب جاي من سلة محفوظة — حوّل حالة السلة لـ converted وفضّيها.
-     * بيتجاهل السلة (ويسجّل تحذير) لو نوعها مش مطابق لنوع الأوردر
-     * أو لو تخص عميل تاني.
      */
     private function linkCartIfPresent(array $payload, Order $order): void
     {
@@ -65,7 +63,6 @@ class OrderService
                 'order_id' => $order->id,
                 'order_type' => $order->order_type,
             ]);
-
             return;
         }
 
@@ -77,7 +74,6 @@ class OrderService
                 'order_id' => $order->id,
                 'order_customer_id' => $order->customer_id,
             ]);
-
             return;
         }
 
@@ -89,10 +85,9 @@ class OrderService
     }
 
     /**
-     * إعادة طلب سابق - بدون مفهوم "سلة" منفصلة، بيبني payload من نفس أصناف
-     * الطلب القديم وبينادي createOnlineOrder() العادية.
+     * إعادة طلب سابق
      *
-     * @throws ReorderUnavailableException لو مفيش أي صنف متاح
+     * @throws ReorderUnavailableException
      */
     public function reorder(
         Customer $customer,
@@ -101,8 +96,8 @@ class OrderService
         ?string $fulfillmentType = null
     ): array {
         $sourceOrder->loadMissing('items.menuItem', 'items.options');
-
         $branch = $sourceOrder->branch;
+
         $items = [];
         $skipped = [];
 
@@ -116,6 +111,10 @@ class OrderService
                 ->where('menu_items.id', $orderItem->menu_item_id)
                 ->where('menu_items.is_available', true)
                 ->where('menu_items.is_available_online', true)
+                ->where(function ($q) use ($orderItem) {
+                    $q->whereNull('menu_item_branch.stock')
+                      ->orWhere('menu_item_branch.stock', '>=', $orderItem->quantity);
+                })
                 ->exists();
 
             if (! $stillAvailable) {
@@ -163,7 +162,7 @@ class OrderService
     }
 
     /**
-     * إنشاء أوردر متجر (منتجات قابلة للشحن أو استلام سريع).
+     * إنشاء أوردر متجر
      */
     public function createStoreOrder(Branch $branch, array $payload): array
     {
@@ -189,7 +188,6 @@ class OrderService
             ]);
 
             $total = 0;
-
             foreach ($payload['items'] as $item) {
                 $total += $this->addStoreOrderItem($order, $item);
             }
@@ -258,7 +256,6 @@ class OrderService
             }
 
             event(new OrderCreated($order));
-
             $this->linkCartIfPresent($payload, $order);
 
             return [
@@ -311,8 +308,6 @@ class OrderService
                 $online
             );
 
-            // QR على الطاولة: fulfillment_type = null
-            // منيو أونلاين: إجباري pickup | dine_in
             $fulfillmentType = null;
             if ($online) {
                 $fulfillmentType = $payload['fulfillment_type'] ?? null;
@@ -367,7 +362,6 @@ class OrderService
 
             if (! empty($payload['coupon_code'])) {
                 $channel = $online ? 'online_menu' : 'qr_menu';
-
                 $itemsForCoupon = $order->items->map(fn ($oi) => [
                     'id' => $oi->menu_item_id,
                     'type' => 'menu_item',
@@ -399,7 +393,6 @@ class OrderService
             );
 
             event(new OrderCreated($order));
-
             $this->linkCartIfPresent($payload, $order);
 
             return [
@@ -422,6 +415,7 @@ class OrderService
             ->where('menu_items.is_available', true)
             ->when($online, fn ($q) => $q->where('menu_items.is_available_online', true))
             ->where('menu_items.id', $cartItem['menu_item_id'])
+            ->lockForUpdate() // مهم ضد البيع المتزامن
             ->first();
 
         if (! $item) {
@@ -429,6 +423,21 @@ class OrderService
         }
 
         $quantity = max(1, (int) ($cartItem['quantity'] ?? 1));
+
+        // ===== التحقق من المخزون + الخصم =====
+        // null = غير محدود
+        $stock = $item->pivot->stock;
+
+        if ($stock !== null) {
+            if ((int) $stock < $quantity) {
+                throw new OrderItemUnavailableException($cartItem['menu_item_id']);
+            }
+
+            $branch->menuItems()->updateExistingPivot($item->id, [
+                'stock' => (int) $stock - $quantity,
+            ]);
+        }
+
         $unitPrice = (float) ($item->pivot->price_override ?? $item->base_price);
         $prep = (int) $item->preparation_time_minutes;
 
@@ -472,7 +481,6 @@ class OrderService
 
         $phone = trim($phone);
         $existing = Customer::where('phone', $phone)->first();
-
         if ($existing) {
             return [$existing, null];
         }
@@ -489,7 +497,42 @@ class OrderService
         return [$customer, $plainPassword];
     }
 
+    /**
+     * إرجاع مخزون أصناف المنيو بعد إلغاء/رفض الطلب
+     */
+    public function refundMenuStockForOrder(Order $order): void
+    {
+        if (! in_array($order->order_type, ['pre_order', 'in_branch'], true)) {
+            return;
+        }
 
+        $order->loadMissing('items');
+
+        foreach ($order->items as $orderItem) {
+            if (! $orderItem->menu_item_id) {
+                continue;
+            }
+
+            $pivot = DB::table('menu_item_branch')
+                ->where('branch_id', $order->branch_id)
+                ->where('menu_item_id', $orderItem->menu_item_id)
+                ->lockForUpdate()
+                ->first();
+
+            // null = غير محدود → مفيش حاجة تترجع
+            if (! $pivot || $pivot->stock === null) {
+                continue;
+            }
+
+            DB::table('menu_item_branch')
+                ->where('branch_id', $order->branch_id)
+                ->where('menu_item_id', $orderItem->menu_item_id)
+                ->update([
+                    'stock' => (int) $pivot->stock + (int) $orderItem->quantity,
+                    'updated_at' => now(),
+                ]);
+        }
+    }
 
     public function serializeOrder(Order $order): array
     {

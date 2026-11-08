@@ -14,13 +14,12 @@ class OrderStatusService
         private readonly StockService $stockService,
         private readonly CouponService $couponService,
         private readonly HyperpayService $hyperpay,
+        private readonly OrderService $orderService,
     ) {
     }
 
     /**
-     * الانتقال بحالة الطلب من الحالة الحالية لحالة جديدة، بعد التحقق إن
-     * الانتقال ده مسموح بيه في خريطة Order::allowedTransitions().
-     * لطلبات المنيو (in_branch / pre_order) بس - لطلبات المتجر استخدم transitionStore().
+     * الانتقال بحالة الطلب (منيو: in_branch / pre_order)
      */
     public function transition(Order $order, string $newStatus, ?Staff $staff = null): Order
     {
@@ -33,7 +32,7 @@ class OrderStatusService
 
         $updates = ['status' => $newStatus];
 
-        // أول مرة يتم فيها قبول أوردر أونلاين (pre_order)، نسجل وقت استلام الفرع للطلب
+        // أول قبول لأوردر أونلاين → تسجيل received_at
         if (
             $newStatus === Order::STATUS_ACCEPTED
             && $order->order_type === 'pre_order'
@@ -46,9 +45,14 @@ class OrderStatusService
 
         if (in_array($newStatus, [Order::STATUS_REJECTED, Order::STATUS_CANCELLED], true)) {
             $fresh = $order->fresh();
+
             $this->loyaltyService->refundRedeemedPoints($fresh);
             $this->couponService->reverseRedemption($fresh);
-            // لو الأوردر كان مدفوع أونلاين، نرجّع الفلوس أوتوماتيك (مش بترمي exception عشان ماتوقفش القفل)
+
+            // إرجاع مخزون المنيو
+            $this->orderService->refundMenuStockForOrder($fresh);
+
+            // استرجاع الدفع الأونلاين إن وجد
             $this->hyperpay->refundIfPaidOnline($fresh);
         }
 
@@ -63,45 +67,58 @@ class OrderStatusService
     }
 
     /**
-     * إلغاء الطلب بواسطة العميل - مسموح بس والأوردر لسه pending.
-     * مش بتعتمد على خريطة allowedTransitions عشان الكاشير يفضل يرفض (rejected) مش يكنسل.
-     * بترجّع نقاط الولاء (أونلاين) أو المخزون (متجر) + الكوبون + الدفع الأونلاين.
+     * إلغاء بواسطة العميل — مسموح فقط و الحالة pending
      */
-    public function cancelByCustomer(Order $order): Order
-    {
-        $currentStatus = $order->status;
+   /**
+ * إلغاء بواسطة العميل — مسموح في أي حالة ما عدا الملغي/المرفوض
+ * + استرجاع نقاط الولاء + المخزون + الكوبون + الدفع الأونلاين
+ */
+public function cancelByCustomer(Order $order): Order
+{
+    $currentStatus = $order->status;
 
-        if ($currentStatus !== Order::STATUS_PENDING) {
-            throw new InvalidOrderTransitionException($currentStatus, Order::STATUS_CANCELLED);
-        }
-
-        $order->update(['status' => Order::STATUS_CANCELLED]);
-
-        $fresh = $order->fresh();
-
-        if ($fresh->order_type === 'store') {
-            $this->stockService->refundForOrder($fresh);
-        } else {
-            $this->loyaltyService->refundRedeemedPoints($fresh);
-        }
-
-        $this->couponService->reverseRedemption($fresh);
-        $this->hyperpay->refundIfPaidOnline($fresh);
-
-        $order->statusLogs()->create([
-            'status' => Order::STATUS_CANCELLED,
-            'changed_by_staff_id' => null,
-        ]);
-
-        event(new OrderStatusUpdated($order->fresh(), $currentStatus));
-
-        return $order->fresh();
+    // منع الإلغاء لو الطلب ملغي أو مرفوض بالفعل
+    if (in_array($currentStatus, [
+        Order::STATUS_CANCELLED,
+        Order::STATUS_REJECTED,
+    ], true)) {
+        throw new InvalidOrderTransitionException($currentStatus, Order::STATUS_CANCELLED);
     }
 
+    // لو فيه STATUS_REFUNDED على الموديل
+    if (defined(Order::class.'::STATUS_REFUNDED') && $currentStatus === Order::STATUS_REFUNDED) {
+        throw new InvalidOrderTransitionException($currentStatus, Order::STATUS_CANCELLED);
+    }
+
+    $order->update(['status' => Order::STATUS_CANCELLED]);
+
+    $fresh = $order->fresh();
+
+    if ($fresh->order_type === 'store') {
+        // متجر → إرجاع مخزون الـ variants
+        $this->stockService->refundForOrder($fresh);
+    } else {
+        // منيو → نقاط الولاء + مخزون menu_item_branch
+        $this->loyaltyService->refundRedeemedPoints($fresh);
+        $this->orderService->refundMenuStockForOrder($fresh);
+    }
+
+    $this->couponService->reverseRedemption($fresh);
+
+    // استرجاع الدفع الأونلاين (HyperPay RF/RV)
+    $this->hyperpay->refundIfPaidOnline($fresh);
+
+    $order->statusLogs()->create([
+        'status' => Order::STATUS_CANCELLED,
+        'changed_by_staff_id' => null,
+    ]);
+
+    event(new OrderStatusUpdated($order->fresh(), $currentStatus));
+
+    return $order->fresh();
+}
     /**
-     * الانتقال بحالة أوردر متجر (order_type = store).
-     * خريطة انتقالات مختلفة تمامًا - مفيش قبول/رفض من الكاشير.
-     * لو انتقل لـ cancelled أو refunded، المخزون بيرجع تلقائيًا (+ استرجاع الدفع الأونلاين).
+     * انتقالات طلبات المتجر (store)
      */
     public function transitionStore(Order $order, string $newStatus, ?Staff $staff = null): Order
     {
@@ -116,6 +133,7 @@ class OrderStatusService
 
         if (in_array($newStatus, [Order::STATUS_CANCELLED, Order::STATUS_REFUNDED], true)) {
             $fresh = $order->fresh();
+
             $this->stockService->refundForOrder($fresh);
             $this->couponService->reverseRedemption($fresh);
             $this->hyperpay->refundIfPaidOnline($fresh);
