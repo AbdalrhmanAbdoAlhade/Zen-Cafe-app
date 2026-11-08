@@ -23,68 +23,62 @@ class CustomerOrderCancelController extends Controller
         private readonly HyperpayService $hyperpay,
     ) {}
 
-    public function __invoke(Request $request, Order $order): JsonResponse
-    {
-        $customer = $request->user('customer');
+   public function __invoke(Request $request, Order $order): JsonResponse
+{
+    $customer = $request->user('customer');
 
-        $result = DB::transaction(function () use ($customer, $order) {
-            // نعيد جلب الأوردر بـ lock عشان لو الكاشير بيقبله في نفس اللحظة ميحصلش تعارض،
-            // ونتأكد إنه بتاع العميل ده (الـ binding لوحده مش بيفلتر بالعميل)
-            $model = Order::whereKey($order->id)
-                ->where('customer_id', $customer->id)
-                ->lockForUpdate()
-                ->first();
+    $result = DB::transaction(function () use ($customer, $order) {
+        $model = Order::whereKey($order->id)
+            ->where('customer_id', $customer->id)
+            ->lockForUpdate()
+            ->first();
 
-            // أوردر مش بتاعه = 404 (منكشفش إنه موجود أصلاً)
-            if (! $model) {
-                return response()->json(['message' => 'الطلب غير موجود.'], 404);
-            }
-
-            if (! in_array($model->order_type, self::CANCELLABLE_TYPES, true)) {
-                return response()->json([
-                    'message' => 'نوع الطلب ده مينفعش يتلغي من العميل.',
-                ], 422);
-            }
-
-            if ($model->status === Order::STATUS_CANCELLED) {
-                return response()->json(['message' => 'الطلب ملغي بالفعل.'], 422);
-            }
-
-            // العميل يكنسل بس قبل ما الفرع يقبل الطلب
-            if ($model->status !== Order::STATUS_PENDING) {
-                return response()->json([
-                    'message' => 'مينفعش تلغي الطلب بعد ما الفرع يبدأ يتعامل معاه.',
-                    'status'  => $model->status,
-                ], 422);
-            }
-
-            try {
-                $model = $this->statusService->cancelByCustomer($model);
-            } catch (InvalidOrderTransitionException $e) {
-                return response()->json([
-                    'message' => 'مينفعش تلغي الطلب في حالته الحالية.',
-                ], 422);
-            }
-
-            return $model;
-        });
-
-        if ($result instanceof JsonResponse) {
-            return $result;
+        if (! $model) {
+            return response()->json(['message' => 'الطلب غير موجود.'], 404);
         }
 
-        // ملحوظة: cancelByCustomer() في OrderStatusService بقت بتعمل الاسترجاع بنفسها،
-        // فمفيش داعي لاستدعاء الاسترجاع هنا تاني.
+        if (! in_array($model->order_type, self::CANCELLABLE_TYPES, true)) {
+            return response()->json([
+                'message' => 'نوع الطلب ده مينفعش يتلغي من العميل.',
+            ], 422);
+        }
 
-        $result->load(
-            $result->order_type === 'store'
-                ? ['items.productVariant.product', 'shipment']
-                : ['items.menuItem', 'items.options.menuOptionValue']
-        );
+        if (in_array($model->status, [
+            Order::STATUS_CANCELLED,
+            Order::STATUS_REJECTED,
+        ], true)) {
+            return response()->json(['message' => 'الطلب ملغي أو مرفوض بالفعل.'], 422);
+        }
 
-        return response()->json([
-            'message' => 'تم إلغاء الطلب بنجاح.',
-            'order'   => $this->orders->serializeOrder($result),
-        ]);
+        // لو فيه STATUS_REFUNDED
+        if (defined(Order::class.'::STATUS_REFUNDED') && $model->status === Order::STATUS_REFUNDED) {
+            return response()->json(['message' => 'الطلب مسترجع بالفعل.'], 422);
+        }
+
+        try {
+            $model = $this->statusService->cancelByCustomer($model);
+        } catch (InvalidOrderTransitionException $e) {
+            return response()->json([
+                'message' => 'مينفعش تلغي الطلب في حالته الحالية.',
+            ], 422);
+        }
+
+        return $model;
+    });
+
+    if ($result instanceof JsonResponse) {
+        return $result;
     }
+
+    $result->load(
+        $result->order_type === 'store'
+            ? ['items.productVariant.product', 'shipment']
+            : ['items.menuItem', 'items.options.menuOptionValue']
+    );
+
+    return response()->json([
+        'message' => 'تم إلغاء الطلب بنجاح' . ($result->isPaidOnline() ? ' وتم استرجاع المبلغ.' : '.'),
+        'order'   => $this->orders->serializeOrder($result),
+    ]);
+}
 }

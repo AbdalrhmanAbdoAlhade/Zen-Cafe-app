@@ -123,24 +123,61 @@ public function update(Request $request, Product $product)
         'country_of_origin'         => ['nullable', 'string', 'max:100'],
         'roast_date'                => ['nullable', 'date'],
         'brewing_method'            => ['nullable', 'string', 'max:100'],
-
-        // مخزون المنتج نفسه
         'stock_quantity'            => ['sometimes', 'integer', 'min:0'],
         'low_stock_threshold'       => ['nullable', 'integer', 'min:0'],
+
+        // صور جديدة تتنضاف
+        'images'                    => ['nullable', 'array'],
+        'images.*'                  => ['image', 'max:2048'],
+
+        // IDs صور قديمة تتحذف
+        'deleted_image_ids'         => ['nullable', 'array'],
+        'deleted_image_ids.*'       => ['integer', 'exists:product_images,id'],
     ]);
 
-    // لو المنتج ليه variants ومش هتعدل الـ stock بتاعه، ممكن تمنع التعديل (اختياري)
-    // if ($product->variants()->exists() && array_key_exists('stock_quantity', $data)) {
-    //     return response()->json([
-    //         'message' => 'هذا المنتج له خيارات، عدّل المخزون من خلال الـ variants',
-    //     ], 422);
-    // }
+    DB::transaction(function () use ($request, $product, $data) {
 
-    $product->update($data);
+        // 1) تحديث بيانات المنتج
+        $product->update(
+            collect($data)->except(['images', 'deleted_image_ids'])->all()
+        );
+
+        // 2) حذف صور محددة
+        if (! empty($data['deleted_image_ids'])) {
+            $imagesToDelete = $product->images()
+                ->whereIn('id', $data['deleted_image_ids'])
+                ->get();
+
+            foreach ($imagesToDelete as $image) {
+                Storage::disk('public')->delete($image->image_path);
+                $image->delete();
+            }
+        }
+
+        // 3) إضافة صور جديدة
+        if ($request->hasFile('images')) {
+            $maxSort = (int) $product->images()->max('sort_order');
+
+            foreach ($request->file('images') as $index => $image) {
+                ProductImage::create([
+                    'product_id' => $product->id,
+                    'image_path' => $this->storeAsWebp(
+                        file: $image,
+                        directory: 'products',
+                        quality: 80,
+                        maxWidth: 1200
+                    ),
+                    'sort_order' => $maxSort + $index + 1,
+                ]);
+            }
+        }
+    });
 
     return response()->json([
         'message' => 'تم تحديث المنتج',
-        'data'    => $this->withPricing($product->fresh(['category', 'images', 'variants'])),
+        'data'    => $this->withPricing(
+            $product->fresh(['category', 'images', 'variants'])
+        ),
     ]);
 }
 
