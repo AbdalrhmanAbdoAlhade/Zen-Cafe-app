@@ -342,7 +342,7 @@ Route::middleware('auth:sanctum')
 
             // ===== منتجات المتجر =====
             Route::post('products', [ProductController::class, 'store']);
-            Route::put('products/{product}', [ProductController::class, 'update']);
+            Route::post('products/{product}', [ProductController::class, 'update']);
             Route::post('products/{product}/variants', [ProductController::class, 'addVariant']);
             Route::put('variants/{variant}', [ProductController::class, 'updateVariant']);
             Route::post('variants/{variant}/restock', [ProductController::class, 'restock']);
